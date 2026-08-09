@@ -154,7 +154,7 @@ function HomeScreen({ calendar, busy, error, onConnect, onCalendarStart, onDisco
           {error && <p className="calendar-error" role="alert">{error}</p>}
           <ul className="service-notes" aria-label="データの取り扱い">
             <li>予定はタイトル・開始終了時刻・繰り返し情報だけを取得します</li>
-            <li>選択した予定と回答のみ、分析のためDeepSeekへ送信します</li>
+            <li>選択した予定と回答のみ、分析のため外部AIサービスへ送信します</li>
             <li>結果は保存しません</li>
           </ul>
         </div>
@@ -670,7 +670,7 @@ function RedesignScreen({ design, onReset }: { design: BusinessDesign; onReset: 
       </section>
 
       <div className="finish-bar">
-        <div><strong>改善案の確認は完了です</strong><p>入力内容は分析のためDeepSeekへ送信されますが、このアプリには保存されません。</p></div>
+        <div><strong>改善案の確認は完了です</strong><p>入力内容は分析のため外部AIサービスへ送信されますが、このアプリには保存されません。</p></div>
         <button type="button" className="secondary-button" onClick={onReset}><RefreshCcw size={18} />最初から試す</button>
       </div>
     </main>
