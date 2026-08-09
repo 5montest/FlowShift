@@ -83,6 +83,15 @@ npm.cmd run deploy
 
 OAuth同意画面がTestingの場合はテストユーザーを登録してください。一般公開時は、Googleの審査要件も確認してください。
 
+## CI/CD
+
+`.github/workflows/ci-cd.yml` がPull Requestで型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。GitHubの`production` environmentに次を設定してください。
+
+- Environment variable `CLOUDFLARE_ACCOUNT_ID`
+- Environment secret `CLOUDFLARE_API_TOKEN`
+
+API tokenはCloudflareの「Edit Cloudflare Workers」テンプレートを使い、対象アカウントと`atto-hub.com`だけへ権限を絞ります。アプリのAPIキーやOAuth secretはCloudflare Workers側に保存したままなので、GitHubへ登録する必要はありません。
+
 ## 構成
 
 ```text
