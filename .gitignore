@@ -6,6 +6,7 @@ dist/
 !.env.example
 *.log
 *.tsbuildinfo
+*.cpuprofile
 apikey.txt
 google-oauth.json
 token-encryption-key.txt
