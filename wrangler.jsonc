@@ -18,6 +18,8 @@
   "d1_databases": [
     {
       "binding": "DB",
+      "database_name": "flowshift-db",
+      "database_id": "bd716694-8121-4008-bf1b-3561a937591c",
       "migrations_dir": "migrations"
     }
   ],
