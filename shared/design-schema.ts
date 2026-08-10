@@ -2,46 +2,91 @@ import { z } from 'zod'
 
 const shortText = z.string().trim().min(1).max(240)
 const sentence = z.string().trim().min(1).max(800)
-const textList = z.array(shortText).min(1).max(12)
-const optionList = z.array(shortText).length(3)
-const outputNeedOptionList = z.array(shortText).length(4)
-const purposeOptionList = z.array(shortText.refine(
-  (value) => !/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(value),
-  '目的候補には成果物名やツール名を含めないでください。',
-)).length(3)
+const textList = z.array(shortText).max(12)
 
 const purposeText = sentence.refine(
-  (value) => !/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(value),
+  (value) => value === '未確認' || !/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(value),
   '目的には成果物名やツール名を含めず、誰が何を把握・判断・達成するかだけを記述してください。',
 )
 
-export const interviewOptionsSchema = z.object({
-  purpose: purposeOptionList,
-  process: optionList,
-  exceptions: optionList,
-  outputNeed: outputNeedOptionList,
+export const workObservationSchema = z.object({
+  title: z.string().trim().min(1).max(500),
+  occurrences: z.number().int().min(1).max(2500),
+  totalMinutes: z.number().int().min(0).max(1_000_000),
+  averageMinutes: z.number().int().min(0).max(43_200),
+  firstOccurredAt: z.string().datetime({ offset: true }),
+  lastOccurredAt: z.string().datetime({ offset: true }),
+  recurring: z.boolean(),
+}).strict()
+
+export const contextDimensionSchema = z.enum([
+  'purpose',
+  'stakeholders',
+  'process',
+  'decision',
+  'exceptions',
+  'constraints',
+  'dependencies',
+  'risks',
+  'outputNeed',
+])
+
+export const interviewQuestionSchema = z.object({
+  id: contextDimensionSchema,
+  prompt: z.string().trim().min(1).max(500),
+  hint: z.string().trim().min(1).max(500),
+  options: z.array(shortText).min(3).max(4),
+}).strict()
+
+export const interviewPlanSchema = z.object({
+  questions: z.array(interviewQuestionSchema).min(4).max(8).superRefine((questions, context) => {
+    const ids = questions.map((question) => question.id)
+    if (new Set(ids).size !== ids.length) context.addIssue({ code: 'custom', message: '質問項目は重複できません。' })
+    for (const required of ['purpose', 'process', 'decision', 'outputNeed'] as const) {
+      if (!ids.includes(required)) context.addIssue({ code: 'custom', message: `${required}の質問が必要です。` })
+    }
+  }),
 }).strict()
 
 export const interviewOptionsRequestSchema = z.object({
-  eventTitle: z.string().trim().min(1).max(120),
-  eventDurationMinutes: z.number().int().min(1).max(1440),
+  observation: workObservationSchema,
+}).strict()
+
+export const contextStateSchema = z.enum(['CONFIRMED', 'PARTIAL', 'UNKNOWN'])
+
+export const contextStatusSchema = z.object({
+  purpose: contextStateSchema,
+  stakeholders: contextStateSchema,
+  process: contextStateSchema,
+  decisions: contextStateSchema,
+  exceptions: contextStateSchema,
+  constraints: contextStateSchema,
+  dependencies: contextStateSchema,
+  risks: contextStateSchema,
+  output: contextStateSchema,
 }).strict()
 
 export const businessTaskSchema = z.object({
   name: shortText,
+  observed: workObservationSchema,
   purpose: purposeText,
   frequency: shortText,
   duration: shortText,
   trigger: shortText,
+  stakeholders: textList,
   consumer: shortText,
   tools: textList,
   inputs: textList,
   output: shortText,
   steps: textList,
   decisionPoints: textList,
+  exceptions: textList,
   constraints: textList,
+  dependencies: textList,
+  risks: textList,
   outputRequirement: z.enum(['NOT_REQUIRED', 'ON_DEMAND', 'REQUIRED', 'UNKNOWN']),
   outputRequirementReason: sentence,
+  contextStatus: contextStatusSchema,
 }).strict()
 
 export const ratingSchema = z.enum(['HIGH', 'MEDIUM', 'LOW'])
@@ -54,9 +99,25 @@ export const workflowStepSchema = z.object({
 }).strict()
 
 export const redesignStrategySchema = z.enum(['ELIMINATE', 'ON_DEMAND', 'AUTOMATE', 'KEEP'])
+export const designReadinessSchema = z.enum(['HYPOTHESIS_READY', 'NEEDS_CONTEXT'])
+export const validationTypeSchema = z.enum([
+  'PILOT',
+  'TECHNICAL_FEASIBILITY',
+  'OFFLINE_EVALUATION',
+  'REQUIREMENT_VALIDATION',
+  'STAKEHOLDER_REVIEW',
+])
+
+export const validationItemSchema = z.object({
+  type: validationTypeSchema,
+  title: shortText,
+  description: sentence,
+  checks: z.array(shortText).min(1).max(8),
+}).strict()
 
 export const designOutputSchema = z.object({
   analysis: z.object({
+    readiness: designReadinessSchema,
     conclusion: sentence,
     purposeCheck: z.object({
       outcome: sentence,
@@ -67,30 +128,32 @@ export const designOutputSchema = z.object({
       value: shortText,
       label: shortText,
       detail: shortText,
-    }).strict()).min(3).max(5),
+    }).strict()).min(1).max(5),
     ratings: z.object({
       opportunity: ratingSchema,
       implementation: ratingSchema,
       aiFit: ratingSchema,
     }).strict(),
     ratingReasons: z.array(sentence).min(1).max(5),
-    facts: z.array(sentence).min(2).max(8),
-    assumptions: z.array(sentence).min(1).max(8),
-    unknowns: z.array(sentence).min(1).max(8),
+    facts: z.array(sentence).min(2).max(10),
+    assumptions: z.array(sentence).max(10),
+    unknowns: z.array(sentence).max(10),
+    nextQuestions: z.array(sentence).max(8),
     conventional: z.object({
       summary: sentence,
-      steps: textList,
+      steps: z.array(shortText).min(1).max(12),
     }).strict(),
   }).strict(),
   redesign: z.object({
     strategy: redesignStrategySchema,
+    hypothesis: sentence,
     headline: sentence,
     insight: sentence,
     workflow: z.array(workflowStepSchema).min(3).max(7),
     roles: z.object({
       system: textList,
       ai: textList,
-      human: textList,
+      human: z.array(shortText).min(1).max(12),
     }).strict(),
     metrics: z.object({
       scheduledOutputBefore: shortText,
@@ -110,49 +173,24 @@ export const designOutputSchema = z.object({
       assumption: sentence,
     }).strict(),
   }).strict(),
+  validationPlan: z.object({
+    summary: sentence,
+    items: z.array(validationItemSchema).min(1).max(5),
+  }).strict(),
 }).strict()
-
-const recurringArtifactPattern = /(?:定期|毎回|毎週|毎月).{0,16}(?:レポート|報告書|資料|メール|レビュー|承認)|(?:レポート|報告書|資料).{0,16}(?:作成|生成|配信|送信|共有|レビュー|承認)|(?:定期メール|メール配信|毎回レビュー|毎回承認)/
 
 export function designOutputSchemaFor(task: BusinessTask) {
   return designOutputSchema.superRefine((design, context) => {
-    const { outputRequirement } = task
-    const { strategy, workflow, metrics, impact } = design.redesign
-    const workflowText = workflow.map((step) => `${step.label} ${step.detail}`).join('\n')
-
-    if (outputRequirement === 'NOT_REQUIRED') {
-      if (strategy !== 'ELIMINATE') {
-        context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '定期成果物が不要なため、strategyはELIMINATEにしてください。' })
-      }
-      if (recurringArtifactPattern.test(workflowText)) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'workflow'], message: '定期成果物が不要なため、レポート生成・定期配信・毎回レビューを新工程から削除してください。' })
-      }
-      if (impact.routineMinutesPerCycle !== 0) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'impact', 'routineMinutesPerCycle'], message: '定期成果物が不要な場合、通常時の定期作業は0分にしてください。' })
-      }
-      if (!/(0|なし|廃止|不要|作らない)/.test(metrics.scheduledOutputAfter)) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'metrics', 'scheduledOutputAfter'], message: '見直し後の定期成果物は0回・なし・廃止のいずれかを明記してください。' })
-      }
-    }
-
-    if (outputRequirement === 'ON_DEMAND') {
-      if (!['ON_DEMAND', 'ELIMINATE'].includes(strategy)) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '必要時のみの成果物なので、strategyはON_DEMANDまたはELIMINATEにしてください。' })
-      }
-      if (impact.routineMinutesPerCycle !== 0) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'impact', 'routineMinutesPerCycle'], message: '必要時のみの成果物なので、通常時の定期作業は0分にしてください。' })
-      }
-      if (!/(0|なし|必要時|オンデマンド)/.test(metrics.scheduledOutputAfter)) {
-        context.addIssue({ code: 'custom', path: ['redesign', 'metrics', 'scheduledOutputAfter'], message: '見直し後の定期成果物がなく、必要時のみであることを明記してください。' })
-      }
-    }
-
-    if (['REQUIRED', 'UNKNOWN'].includes(outputRequirement) && ['ELIMINATE', 'ON_DEMAND'].includes(strategy)) {
-      context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '定期成果物の廃止が確認できていないため、strategyはAUTOMATEまたはKEEPにしてください。' })
-    }
-
-    if (impact.exceptionMinutesMin > impact.exceptionMinutesMax) {
+    if (design.redesign.impact.exceptionMinutesMin > design.redesign.impact.exceptionMinutesMax) {
       context.addIssue({ code: 'custom', path: ['redesign', 'impact', 'exceptionMinutesMin'], message: '例外時の最小時間は最大時間以下にしてください。' })
+    }
+
+    const criticalContext = [task.contextStatus.constraints, task.contextStatus.dependencies, task.contextStatus.risks]
+    if (criticalContext.includes('UNKNOWN') && design.analysis.readiness !== 'NEEDS_CONTEXT') {
+      context.addIssue({ code: 'custom', path: ['analysis', 'readiness'], message: '重大な制約・依存関係・リスクが未確認の場合は、追加確認が必要です。' })
+    }
+    if (design.analysis.readiness === 'NEEDS_CONTEXT' && design.redesign.strategy === 'ELIMINATE') {
+      context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '追加確認が必要な段階では業務廃止を断定できません。' })
     }
   })
 }
@@ -162,12 +200,12 @@ export const businessDesignSchema = designOutputSchema.extend({
 }).strict()
 
 export const interviewRequestSchema = z.object({
-  eventTitle: z.string().trim().min(1).max(120),
-  eventDurationMinutes: z.number().int().min(1).max(1440),
+  observation: workObservationSchema,
   answers: z.array(z.object({
+    dimension: contextDimensionSchema,
     question: z.string().trim().min(1).max(500),
     answer: z.string().trim().min(1).max(2000),
-  }).strict()).min(4).max(5),
+  }).strict()).min(4).max(8),
 }).strict()
 
 export const designRequestSchema = z.object({
@@ -177,9 +215,15 @@ export const designRequestSchema = z.object({
 export type BusinessTask = z.infer<typeof businessTaskSchema>
 export type BusinessDesign = z.infer<typeof businessDesignSchema>
 export type DesignOutput = z.infer<typeof designOutputSchema>
-export type InterviewOptions = z.infer<typeof interviewOptionsSchema>
+export type InterviewPlan = z.infer<typeof interviewPlanSchema>
+export type InterviewQuestion = z.infer<typeof interviewQuestionSchema>
+export type InterviewAnswer = z.infer<typeof interviewRequestSchema.shape.answers.element>
+export type WorkObservation = z.infer<typeof workObservationSchema>
+export type ContextState = z.infer<typeof contextStateSchema>
 export type Rating = z.infer<typeof ratingSchema>
 export type WorkflowKind = z.infer<typeof workflowKindSchema>
 export type WorkflowStepInput = z.infer<typeof workflowStepSchema>
+export type ValidationItem = z.infer<typeof validationItemSchema>
+export type ValidationType = z.infer<typeof validationTypeSchema>
 export type OutputRequirement = z.infer<typeof businessTaskSchema.shape.outputRequirement>
 export type RedesignStrategy = z.infer<typeof redesignStrategySchema>

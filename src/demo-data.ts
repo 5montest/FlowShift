@@ -1,169 +1,167 @@
-import type { BusinessDesign, BusinessTask, DemoEvent, InterviewQuestion, WorkflowStep } from './types'
+import type { BusinessDesign, BusinessTask, InterviewPlan } from './types'
+import type { WorkGroup } from '../shared/work-group'
 
-export const demoEvents: DemoEvent[] = [
-  { id: 'morning', day: '月', date: '8/3', time: '09:00', duration: 20, title: '朝会', category: '会議', recurring: true, source: 'demo' },
+export const demoWorkGroups: WorkGroup[] = [
   {
-    id: 'sales-report',
-    day: '月',
-    date: '8/3',
-    time: '10:00',
-    duration: 45,
-    title: '売上レポート作成',
-    category: '資料作成',
-    recurring: true,
-    source: 'demo',
-    candidate: { rank: 1, level: 'HIGH', reason: '週次・45分・定型作業の可能性' },
-  },
-  { id: 'sales-meeting', day: '月', date: '8/3', time: '13:00', duration: 60, title: '営業定例', category: '会議', recurring: true, source: 'demo', candidate: { rank: 3, level: 'MEDIUM', reason: '毎週・会議改善の可能性' } },
-  { id: 'customer-update', day: '火', date: '8/4', time: '09:30', duration: 30, title: '顧客データ更新', category: 'データ入力', recurring: true, source: 'demo', candidate: { rank: 2, level: 'HIGH', reason: '手作業による転記の可能性' } },
-  { id: 'customer-meeting', day: '火', date: '8/4', time: '13:00', duration: 60, title: '顧客打ち合わせ', category: '顧客対応', source: 'demo' },
-  { id: 'inquiry', day: '水', date: '8/5', time: '10:00', duration: 45, title: '問い合わせ対応', category: '顧客対応', source: 'demo' },
-  { id: 'proposal', day: '木', date: '8/6', time: '14:00', duration: 90, title: '提案書レビュー', category: '資料作成', source: 'demo' },
-  { id: 'one-on-one', day: '金', date: '8/7', time: '11:00', duration: 30, title: '1on1', category: '会議', recurring: true, source: 'demo' },
-]
-
-export const interviewQuestions: InterviewQuestion[] = [
-  {
-    id: 'purpose',
-    prompt: 'この業務は、誰が何を判断するために行っていますか？',
-    hint: '作業内容ではなく、最終的な目的を教えてください。',
-    options: [
-      '営業部長が売上の重要な変化を把握し、必要な施策を判断するため',
-      '営業担当者が目標との差を確認し、次の行動を調整するため',
-      '経営陣が事業計画との差を把握し、対応の優先順位を判断するため',
-    ],
+    id: 'recurring:morning', title: '朝会', occurrences: 20, totalMinutes: 300, averageMinutes: 15,
+    firstOccurredAt: '2026-07-13T00:00:00.000Z', lastOccurredAt: '2026-08-07T00:00:00.000Z', recurringEventId: 'morning', category: '会議',
+    evidence: { recurring: true, occurrenceCount: 20, totalMinutes: 300 },
   },
   {
-    id: 'process',
-    prompt: '実際には、どのツールを使って何をしていますか？',
-    hint: '開始から共有までを順番に教えてください。',
-    options: [
-      'SalesforceからCSVを取得し、Excelで集計してPowerPointへ貼り、Teamsで共有する',
-      'Salesforceの数値をGoogleスプレッドシートへ転記し、Slackで共有する',
-      'Excelで売上を集計してグラフを作り、メールで共有する',
-    ],
+    id: 'recurring:sales-meeting', title: '営業定例', occurrences: 4, totalMinutes: 240, averageMinutes: 60,
+    firstOccurredAt: '2026-07-13T04:00:00.000Z', lastOccurredAt: '2026-08-03T04:00:00.000Z', recurringEventId: 'sales-meeting', category: '会議',
+    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 240 },
   },
   {
-    id: 'exceptions',
-    prompt: 'いつ人の判断が必要になりますか？',
-    hint: '人間が確認し続ける必要がある部分を探します。',
-    options: [
-      '前週比が大きく変わったときだけ、原因を確認してコメントする',
-      '売上目標を下回ったときだけ、担当者へ状況を確認する',
-      '集計は毎回同じで、例外時だけ人が判断する',
-    ],
+    id: 'recurring:sales-report', title: '売上レポート作成', occurrences: 4, totalMinutes: 180, averageMinutes: 45,
+    firstOccurredAt: '2026-07-13T01:00:00.000Z', lastOccurredAt: '2026-08-03T01:00:00.000Z', recurringEventId: 'sales-report', category: '資料作成',
+    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 180 },
   },
   {
-    id: 'outputNeed',
-    prompt: '現在の成果物は本当に必要ですか？',
-    hint: '定期レポートがなくても目的を達成できるか確認します。',
-    options: [
-      '重要な変化があるときだけ通知されればよい',
-      '必要なときに確認できればよい',
-      '法令・監査上、定期レポートが必要',
-      '定例会議のため、毎回必要',
-    ],
+    id: 'recurring:customer-update', title: '顧客データ更新', occurrences: 4, totalMinutes: 120, averageMinutes: 30,
+    firstOccurredAt: '2026-07-14T00:30:00.000Z', lastOccurredAt: '2026-08-04T00:30:00.000Z', recurringEventId: 'customer-update', category: 'データ処理',
+    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 120 },
   },
 ]
 
-export const initialBusinessTask: BusinessTask = {
-  name: '売上レポート作成',
-  purpose: '営業部長が売上の重要な変化を把握し、必要な施策を判断する',
-  frequency: '週1回',
-  duration: '45分',
-  trigger: '毎週月曜日 10:00',
-  consumer: '営業部長',
-  tools: ['Salesforce', 'Excel', 'PowerPoint', 'Teams'],
-  inputs: ['Salesforce売上データ'],
-  output: '週次売上報告',
-  steps: ['CSVを取得', 'Excelへ転記', '売上を集計', 'グラフを資料へ貼付', 'Teamsで共有'],
-  decisionPoints: ['前週比で大きな変化があるか'],
-  constraints: ['Salesforce APIの利用可否は未確認', '報告形式の変更には上司の合意が必要'],
-  outputRequirement: 'NOT_REQUIRED',
-  outputRequirementReason: '重要な変化と理由が分かれば、定期レポートは不要',
+export const demoInterviewPlan: InterviewPlan = {
+  questions: [
+    {
+      id: 'purpose',
+      prompt: 'この朝会は、誰が何を把握・判断するために行っていますか？',
+      hint: '会議を開くこと自体ではなく、終わった後に実現したい状態を選びます。',
+      options: ['チーム全員が当日の重要な予定変更を把握し、調整の要否を判断するため', '責任者が作業の遅れを把握し、支援の優先順位を判断するため', '複数の役割があり、一つに絞れない', 'まだ分からない'],
+    },
+    {
+      id: 'stakeholders',
+      prompt: '参加者と、共有結果を必要とする人は誰ですか？',
+      hint: '参加していなくても結果を使う人がいれば含めます。',
+      options: ['チームメンバーと直属の責任者', '複数部署の担当者と調整責任者', '参加者だけ', 'まだ整理できていない'],
+    },
+    {
+      id: 'process',
+      prompt: '朝会では実際に何をしていますか？',
+      hint: '通常の進め方に最も近いものを選びます。',
+      options: ['各自が今日の予定と変更点を順番に口頭共有する', '予定共有に加えて、困りごとの相談と担当調整を行う', '進捗確認と上長からの指示が中心', '回によって大きく異なる'],
+    },
+    {
+      id: 'decision',
+      prompt: 'その場で人が判断していることは何ですか？',
+      hint: '単なる共有と、判断・調整を分けます。',
+      options: ['予定が衝突した場合の担当・時間調整', '遅れや問題がある場合の支援判断', '通常は判断せず、予定を共有するだけ', 'まだ分からない'],
+    },
+    {
+      id: 'exceptions',
+      prompt: '通常と違う対応が必要になるのはどんなときですか？',
+      hint: '通知だけでは足りない場面を確認します。',
+      options: ['予定変更や担当の重複があるとき', '緊急案件や遅延が発生したとき', '新人参加や引き継ぎがあるとき', '例外を整理できていない'],
+    },
+    {
+      id: 'constraints',
+      prompt: '朝会を変えるうえで守る必要がある条件はありますか？',
+      hint: '制度、責任、情報管理、チーム運営上の条件を確認します。',
+      options: ['特に確認できていない', '責任者への毎日の報告が必要', '口頭でしか共有できない情報がある', '新人教育やチーム形成の役割がある'],
+    },
+    {
+      id: 'outputNeed',
+      prompt: '毎朝集まることは、目的達成に必須ですか？',
+      hint: '会議以外の役割がないかも含めて判断します。',
+      options: ['重要な変化があるときだけ通知されればよい', '予定は非同期共有できるが、相談の時間は別途必要', '新人教育や関係づくりのため毎回必要', '現時点では判断できない'],
+    },
+  ],
 }
 
-export const currentWorkflow: WorkflowStep[] = [
-  { id: 'salesforce', label: 'Salesforce', detail: '売上データを開く', kind: 'system' },
-  { id: 'csv', label: 'CSV取得', detail: '人がダウンロード', kind: 'human' },
-  { id: 'excel', label: 'Excel集計', detail: '転記・計算・グラフ', kind: 'human' },
-  { id: 'powerpoint', label: 'PowerPoint', detail: '報告資料へ貼り付け', kind: 'human' },
-  { id: 'teams', label: 'Teams共有', detail: '上司へ送付', kind: 'output' },
-]
+const observed = {
+  title: '朝会', occurrences: 20, totalMinutes: 300, averageMinutes: 15,
+  firstOccurredAt: '2026-07-13T00:00:00.000Z', lastOccurredAt: '2026-08-07T00:00:00.000Z', recurring: true,
+}
 
-export const automatedWorkflow: WorkflowStep[] = [
-  { id: 'api', label: 'Salesforce API', detail: '定期データ取得', kind: 'system' },
-  { id: 'aggregate', label: '自動集計', detail: 'ルールベース処理', kind: 'system' },
-  { id: 'slides', label: '資料を自動生成', detail: '既存形式を維持', kind: 'system' },
-  { id: 'post', label: 'Teams投稿', detail: '毎週自動送信', kind: 'output' },
-]
-
-export const nativeWorkflow: WorkflowStep[] = [
-  { id: 'source', label: '売上データを常時取得', detail: 'Salesforceから更新を取得', kind: 'system' },
-  { id: 'analyst', label: '変化を継続監視', detail: '目標・前週・前年との差を分析', kind: 'ai' },
-  { id: 'change', label: '重要な変化あり？', detail: '閾値と文脈で判定', kind: 'decision' },
-  { id: 'explain', label: '原因候補と影響を整理', detail: '判断に必要な説明をまとめる', kind: 'ai' },
-  { id: 'notify', label: '必要なときだけ通知', detail: '重要な変化がある場合のみ', kind: 'output' },
-  { id: 'review', label: '原因と施策を判断', detail: '人が確認し、対応を決める', kind: 'human' },
-]
-
-export const problems = [
-  { value: '4', label: 'システムを横断', detail: 'SalesforceからTeamsまで' },
-  { value: '3', label: '手動データ移動', detail: 'CSV・Excel・PowerPoint' },
-  { value: 'HIGH', label: '反復性', detail: '毎週ほぼ同じ手順' },
-  { value: 'LOW', label: '判断の複雑さ', detail: '変化時のみ人が判断' },
-]
-
-export const facts = ['毎週45分かかる', 'CSVを手動取得する', '同じ集計を繰り返す', '営業部長が重要な売上変化を把握して施策を判断する']
-export const assumptions = ['Salesforce APIが利用できる', '売上変化を判定する閾値を定義できる']
-export const unknowns = ['API利用権限', '上司が必要とする報告形式', '異常とみなす基準']
+export const initialBusinessTask: BusinessTask = {
+  name: '朝会',
+  observed,
+  purpose: 'チーム全員が当日の重要な予定変更を把握し、調整の要否を判断する',
+  frequency: '過去4週間で20回',
+  duration: '1回平均15分、合計5時間',
+  trigger: '平日の始業時',
+  stakeholders: ['チームメンバー', '直属の責任者'],
+  consumer: 'チームメンバーと直属の責任者',
+  tools: ['Google Calendar', '口頭共有'],
+  inputs: ['各メンバーの当日の予定', '前日からの変更'],
+  output: '今日の作業予定の共有（口頭）',
+  steps: ['参加者が集まる', '各自が当日の予定を共有する', '変更があれば担当や時間を調整する'],
+  decisionPoints: ['予定の衝突や重要な変更がある場合に調整する'],
+  exceptions: ['予定変更や担当の重複がある場合'],
+  constraints: [],
+  dependencies: [],
+  risks: [],
+  outputRequirement: 'NOT_REQUIRED',
+  outputRequirementReason: '回答では重要な変化があるときの通知でよいとされたが、朝会の他の役割は未確認',
+  contextStatus: {
+    purpose: 'CONFIRMED', stakeholders: 'PARTIAL', process: 'CONFIRMED', decisions: 'CONFIRMED', exceptions: 'PARTIAL',
+    constraints: 'UNKNOWN', dependencies: 'UNKNOWN', risks: 'UNKNOWN', output: 'CONFIRMED',
+  },
+}
 
 export const demoDesign: BusinessDesign = {
   businessTask: initialBusinessTask,
   analysis: {
-    conclusion: '定期レポート作成を廃止し、重要な変化があるときだけ人が判断する業務へ見直せます。',
+    readiness: 'NEEDS_CONTEXT',
+    conclusion: '現時点では、この朝会を廃止できるとは判断できません。予定共有以外の役割と制約を先に確認する必要があります。',
     purposeCheck: {
-      outcome: '営業部長が売上の重要な変化を把握し、必要な施策を判断する',
-      currentMeans: '週次売上レポートを作成し、Teamsで共有する',
-      outputDecision: '変化と理由の通知で目的を達成できるため、定期レポートは廃止する',
+      outcome: 'チーム全員が重要な予定変更を把握し、必要な調整を判断する',
+      currentMeans: '毎朝15分集まり、各自が予定を口頭で共有する',
+      outputDecision: '通知への置き換え可能性はあるが、教育・相談・他部署調整の役割が未確認のため判断を保留する',
     },
-    problems,
-    ratings: { opportunity: 'HIGH', implementation: 'MEDIUM', aiFit: 'HIGH' },
-    ratingReasons: ['週次・45分の反復業務', '複数システム間の手動転記がある', '判断は変化時に限定されている'],
-    facts,
-    assumptions,
-    unknowns,
+    problems: [
+      { value: '20回', label: '繰り返し', detail: '過去4週間に同じ定例予定がある' },
+      { value: '5時間', label: '合計時間', detail: '参加人数を除いた予定枠だけの合計' },
+      { value: '未確認', label: '隠れた役割', detail: '予定共有以外の役割が分かっていない' },
+    ],
+    ratings: { opportunity: 'MEDIUM', implementation: 'MEDIUM', aiFit: 'MEDIUM' },
+    ratingReasons: ['高頻度の定例業務だが、会議が担う非公式な役割を確認できていない'],
+    facts: ['過去4週間で20回開催されている', '1回平均15分、予定枠の合計は5時間', 'ユーザー回答では当日の予定共有を行っている'],
+    assumptions: ['メンバーの予定変更をデジタルに取得できる可能性がある', '重要な変更の基準をチームで定義できる可能性がある'],
+    unknowns: ['新人教育の役割があるか', '他部署との調整に使われているか', '朝会を変更できない制度・責任上の制約があるか'],
+    nextQuestions: ['朝会がなくなると困る人と理由を確認する', '直近4週間で予定共有以外に役立った場面を確認する', 'カレンダーに登録されない共有事項を確認する'],
     conventional: {
-      summary: 'API取得、自動集計、資料生成、Teams投稿により、現在の報告形式を維持したまま自動化する。',
-      steps: automatedWorkflow.map((step) => step.label),
+      summary: '会議時間を短くする、発言順を固定するなど、朝会を残したまま効率化する。',
+      steps: ['共有内容を事前記入', '朝会で差分だけ発言', '責任者が調整事項を確認'],
     },
   },
   redesign: {
-    strategy: 'ELIMINATE',
-    headline: '重要な変化があるときだけ判断する',
-    insight: '「毎週レポートを作る」から「変化があるときだけ原因と施策を判断する」へ移行する。',
-    workflow: nativeWorkflow.map(({ label, detail, kind }) => ({ label, detail, kind })),
+    strategy: 'KEEP',
+    hypothesis: '予定共有が主目的であり、新人教育・相談・他部署調整などの重要な役割が存在しない場合、定期朝会をなくし、重要な予定変更だけを通知する構成へ変更できる可能性があります。',
+    headline: '予定共有を、変化があるときだけの確認へ',
+    insight: '毎朝全員が予定を読み上げる仕事から、変化が発生したときだけ人が調整を判断する仕事へ変える仮説です。',
+    workflow: [
+      { label: '予定を取得', detail: 'メンバーが許可したカレンダーから予定を集約する', kind: 'system' },
+      { label: '前回との差分を検出', detail: '追加・削除・時刻変更を決定論的に抽出する', kind: 'system' },
+      { label: '影響候補を整理', detail: '関係者や調整が必要そうな理由を候補として示す', kind: 'ai' },
+      { label: '必要時だけ通知', detail: '合意した条件に該当する変化だけを通知する', kind: 'output' },
+      { label: '確認して調整', detail: '人が影響を確認し、担当や時間を決める', kind: 'human' },
+    ],
     roles: {
-      system: ['API取得', '定期実行', 'ルール判定'],
-      ai: ['変化分析', '原因候補', '要点生成'],
-      human: ['最終判断', '例外対応', '施策決定'],
+      system: ['許可された予定の取得', '予定差分の抽出', '通知の配信'],
+      ai: ['変更の意味と影響候補の整理', '通知文の下書き'],
+      human: ['通知条件の承認', '影響の確認', '担当や予定の最終調整'],
     },
     metrics: {
-      scheduledOutputBefore: '週1回',
-      scheduledOutputAfter: '原則0回',
-      routineHumanWorkBefore: '毎週45分・5工程',
-      routineHumanWorkAfter: '通常時なし',
-      detectionBefore: '週次レポート作成時',
-      detectionAfter: 'データ更新時に継続監視',
-      outputBefore: '定型の週次売上レポート',
-      outputAfter: '重要な変化があるときの通知と説明',
+      scheduledOutputBefore: '毎日1回の朝会（15分）', scheduledOutputAfter: '仮説上は0回（定期開催なし）',
+      routineHumanWorkBefore: '毎日15分の会議参加', routineHumanWorkAfter: '仮説上は通常なし',
+      detectionBefore: '毎朝の会議で変化を確認', detectionAfter: '予定更新時に変化を検知',
+      outputBefore: '今日の作業予定の共有（口頭）', outputAfter: '重要な変化の通知（自動生成）',
     },
     impact: {
-      routineMinutesPerCycle: 0,
-      exceptionMinutesMin: 5,
-      exceptionMinutesMax: 10,
-      confidence: 'MEDIUM',
-      assumption: 'Salesforceから継続取得でき、重要な変化の基準を定義できる前提',
+      routineMinutesPerCycle: 0, exceptionMinutesMin: 5, exceptionMinutesMax: 10, confidence: 'LOW',
+      assumption: '予定共有以外の重要な役割がなく、必要な予定がデジタル化されている場合の推定',
     },
+  },
+  validationPlan: {
+    summary: '会議を止める前に、利用者要件と技術条件を順に確認します。期間は検証内容の合意後に決めます。',
+    items: [
+      { type: 'REQUIREMENT_VALIDATION', title: '朝会の隠れた役割を確認', description: '参加者へ、朝会がなくなると失われる情報や関係性を確認します。', checks: ['予定共有以外の利用目的', '新人教育・相談の有無', '口頭でしか扱えない情報'] },
+      { type: 'TECHNICAL_FEASIBILITY', title: '予定差分を取得できるか確認', description: '必要な予定と変更情報を、許可された範囲で取得できるか確認します。', checks: ['Calendar APIの権限', '予定未登録時の扱い', '通知先と情報公開範囲'] },
+      { type: 'PILOT', title: '一部メンバーで並行運用', description: '朝会を残したまま通知を並行し、取りこぼしと不要通知を記録します。', checks: ['見逃した重要変更', '不要だった通知', '人が調整した場面'] },
+    ],
   },
 }

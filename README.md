@@ -1,28 +1,36 @@
 # FlowShift
 
-予定から繰り返し業務を見つけ、現在の作業をそのまま自動化するのではなく、目的と人の判断から業務を再設計するWebアプリです。
+FlowShiftは、本人が持つ業務知識を質問で引き出し、構造化し、AI時代の別の設計可能性を検証するためのAX設計支援ツールです。
 
-Google Calendarの読み取り、DeepSeek V4 Flashによるヒアリング候補・業務モデル・改善案の生成まで実装しています。
+```text
+発見 → コンテクスト収集 → 構造化 → 再設計仮説 → 検証 → 人が判断
+```
+
+Google Calendarは業務を理解するデータではなく、質問を始める索引として使います。予定の頻度だけから、業務の廃止や自動化を断定しません。
 
 ## 実装済み
 
-- Google OAuth 2.0 Authorization Code + PKCE
-- Google Calendarの予定一覧取得（タイトル、開始・終了、繰り返し情報のみ）
-- 候補を1件選んでからDeepSeekへ送るデータ最小化
-- D1のユーザー、暗号化OAuthトークン、ハッシュ化セッション保存
-- 読み取り専用Calendar scopeと接続解除時のToken revoke
-- 選択式ヒアリング、BusinessTask確認、目的からの業務再設計
+- 過去28日分のCalendar取得、ページネーション、定例予定IDの保持
+- 定例予定IDと正規化タイトルによる決定論的なWorkGroup集約
+- 4週間の業務傾向と、観測事実に基づくDiscovery Dashboard
+- 業務に応じた選択式ヒアリングと自由入力
+- 目的、関係者、工程、判断、例外、制約、依存関係、リスク、成果物の構造化
+- 項目別の「確認済み・一部確認・未確認」表示
+- Facts / Assumptions / Unknownsを分離した条件付き再設計仮説
+- 内容に応じた検証計画と、人による採用・保留・却下
+- ユーザーが確認した改善プロジェクトだけをD1へ保存
+- Google OAuth、暗号化トークン、ハッシュ化セッション
 - Cloudflare Workers、Hono、React、Vite、Zod
 
 ## ローカル起動
 
 必要環境はNode.js 22以降です。
 
-1. `apikey.txt` にDeepSeek APIキーを1行で保存します。
+1. `apikey.txt` にAI APIキーを1行で保存します。
 2. Google CloudでGoogle Calendar APIを有効化します。
-3. OAuth同意画面を設定し、「ウェブ アプリケーション」のOAuthクライアントを作成します。
-4. 承認済みリダイレクトURIに `http://localhost:5173/api/google/callback` を完全一致で登録します。
-5. ダウンロードした認証情報JSONをプロジェクト直下へ `google-oauth.json` という名前で保存します。
+3. OAuth同意画面を設定し、ウェブアプリケーションのOAuthクライアントを作成します。
+4. 承認済みリダイレクトURIへ `http://localhost:5173/api/google/callback` を登録します。
+5. 認証情報JSONをプロジェクト直下へ `google-oauth.json` として保存します。
 6. 起動します。
 
 ```powershell
@@ -30,80 +38,52 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-`predev` が次を自動で行います。
-
-- `apikey.txt` と `google-oauth.json` からGit対象外の `.dev.vars` を生成
-- 初回だけ `token-encryption-key.txt` を生成
-- ローカルD1へ `migrations/` を適用
-
-Google認証情報がない場合もデモモードとDeepSeek連携は利用できます。Google連携ボタンは、設定不足が分かる無効状態になります。
+`predev`がローカル用secretを生成し、D1 migrationを適用します。Google認証情報がない場合もデモは利用できます。
 
 ## データの扱い
 
 - Calendar scopeは `calendar.events.readonly` です。
-- 一覧取得時は、予定のタイトル、開始・終了時刻、繰り返し情報だけをGoogleへ要求します。
-- DeepSeekへ送るのは、ユーザーが選択した予定のタイトル・所要時間とヒアリング回答だけです。
-- Calendar予定と分析結果は保存しません。
+- 過去28日のタイトル、開始・終了、定例予定IDだけを取得します。
+- 外部AIサービスへ送るのは、選択したWorkGroupの観測情報とヒアリング回答だけです。
+- Calendar全件と会話全文は保存しません。
+- 保存するのは、ユーザーが確認した業務モデル、再設計仮説、検証計画、判断状態だけです。
 - Google Refresh TokenはAES-GCMで暗号化してD1へ保存します。
 - ブラウザにはランダムなセッションIDだけをHttpOnly / SameSite=Lax cookieとして保存します。
-- 接続解除時はGoogle Tokenをrevokeし、D1の認証情報とセッションを削除します。
 
 ## 検証
 
 ```powershell
-# 型検査、production build、secret混入検査
+npm.cmd run workgroups:check
 npm.cmd run build
-
-# dev起動中のCalendar認証ガードとDeepSeek実API疎通
 npm.cmd run smoke
-
-# Cloudflareへのアップロード内容をdry-run
+npm.cmd run secret:check
 npm.cmd run cf:dry-run
 ```
 
-`build` は `.dev.vars` を削除してから成果物を作り、ローカルのAPIキー、Google OAuth secret、Token暗号鍵が `dist/` に含まれないことを検査します。次回の `dev` で `.dev.vars` は再生成されます。
-
-## Cloudflare本番設定
-
-本番用OAuthクライアントには、実際のオリジンを使った `https://<your-domain>/api/google/callback` を登録してください。次の値はファイルや `wrangler.jsonc` へ書かず、Cloudflare secretとして設定します。
-
-```powershell
-npx.cmd wrangler secret put DEEPSEEK_API_KEY
-npx.cmd wrangler secret put GOOGLE_CLIENT_ID
-npx.cmd wrangler secret put GOOGLE_CLIENT_SECRET
-npx.cmd wrangler secret put TOKEN_ENCRYPTION_KEY
-```
-
-`TOKEN_ENCRYPTION_KEY` には32バイト以上のランダム値を使います。D1を本番環境へプロビジョニングし、公開前に次を実行します。
-
-```powershell
-npm.cmd run db:migrate:remote
-npm.cmd run deploy
-```
-
-OAuth同意画面がTestingの場合はテストユーザーを登録してください。一般公開時は、Googleの審査要件も確認してください。
+`build`はローカルsecretを削除してから成果物を作り、secretが`dist/`へ混入していないことを検査します。次回の`dev`でローカル用secretは再生成されます。
 
 ## CI/CD
 
-`.github/workflows/ci-cd.yml` がPull Requestで型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。GitHubの`production` environmentに次を設定してください。
+`.github/workflows/ci-cd.yml`はPull Requestで型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。
+
+GitHubの`production` environmentには次だけを設定します。
 
 - Environment variable `CLOUDFLARE_ACCOUNT_ID`
 - Environment secret `CLOUDFLARE_API_TOKEN`
 
-API tokenはCloudflareの「Edit Cloudflare Workers」テンプレートを使い、対象アカウントと`atto-hub.com`だけへ権限を絞ります。アプリのAPIキーやOAuth secretはCloudflare Workers側に保存したままなので、GitHubへ登録する必要はありません。
+アプリのAPIキー、OAuth secret、暗号鍵はCloudflare Workers側で管理し、GitHubへ保存しません。
 
 ## 構成
 
 ```text
-migrations/                 D1 schema
-shared/calendar-schema.ts   Calendar APIの共有schema
-shared/design-schema.ts     業務設計の共有schema
-src/App.tsx                 画面と接続・選択フロー
-src/api.ts                  ブラウザからWorker APIへの通信
-worker/google-calendar.ts   OAuth、暗号化Token、Calendar取得
-worker/deepseek.ts          DeepSeek呼び出しと出力検証
-worker/index.ts             Hono routesと認証ガード
-wrangler.jsonc              Worker、D1、secret設定
+migrations/                  D1 schema
+shared/calendar-schema.ts    Calendar API schema
+shared/work-group.ts         WorkGroupの決定論的集約
+shared/design-schema.ts      業務コンテクスト・仮説・検証schema
+shared/project-schema.ts     保存する改善プロジェクトschema
+src/App.tsx                  Dashboardと設計フロー
+src/api.ts                   ブラウザからWorker APIへの通信
+worker/google-calendar.ts    OAuth、暗号化Token、Calendar取得
+worker/index.ts              API routesと認証ガード
+wrangler.jsonc               Worker、D1、secret設定
 ```
-
-詳細なコンセプトとセキュリティ要件は `AI-Native Business Designer_v1.2.md` を参照してください。

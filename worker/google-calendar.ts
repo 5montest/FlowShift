@@ -78,7 +78,8 @@ const googleEventSchema = z.object({
 }).passthrough()
 
 const googleEventsSchema = z.object({
-  items: z.array(googleEventSchema).optional(),
+  items: z.array(googleEventSchema).max(2500).optional(),
+  nextPageToken: z.string().optional(),
 }).passthrough()
 
 type StoredToken = z.infer<typeof storedTokenSchema>
@@ -414,8 +415,8 @@ async function authenticatedCredential(request: Request, env: Env): Promise<{ se
 function calendarRange(request: Request): { timeMin: string; timeMax: string } {
   const url = new URL(request.url)
   const now = Date.now()
-  const timeMin = url.searchParams.get('timeMin') ?? new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString()
-  const timeMax = url.searchParams.get('timeMax') ?? new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const timeMin = url.searchParams.get('timeMin') ?? new Date(now - 28 * 24 * 60 * 60 * 1000).toISOString()
+  const timeMax = url.searchParams.get('timeMax') ?? new Date(now).toISOString()
   const [minMs, maxMs] = [Date.parse(timeMin), Date.parse(timeMax)]
   if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs || maxMs - minMs > MAX_CALENDAR_RANGE_MS) {
     throw new GoogleCalendarError('invalid_range', '取得期間は31日以内の有効な日時で指定してください。', 400)
@@ -423,7 +424,7 @@ function calendarRange(request: Request): { timeMin: string; timeMax: string } {
   return { timeMin: new Date(minMs).toISOString(), timeMax: new Date(maxMs).toISOString() }
 }
 
-function googleEventUrl(range: { timeMin: string; timeMax: string }): string {
+function googleEventUrl(range: { timeMin: string; timeMax: string }, pageToken?: string): string {
   const url = new URL(CALENDAR_ENDPOINT)
   url.search = new URLSearchParams({
     timeMin: range.timeMin,
@@ -431,14 +432,15 @@ function googleEventUrl(range: { timeMin: string; timeMax: string }): string {
     singleEvents: 'true',
     orderBy: 'startTime',
     showDeleted: 'false',
-    maxResults: '100',
-    fields: 'items(id,summary,status,start,end,recurringEventId)',
+    maxResults: '250',
+    fields: 'nextPageToken,items(id,summary,status,start,end,recurringEventId)',
   }).toString()
+  if (pageToken) url.searchParams.set('pageToken', pageToken)
   return url.toString()
 }
 
-async function fetchGoogleEvents(accessToken: string, range: { timeMin: string; timeMax: string }): Promise<Response> {
-  return fetch(googleEventUrl(range), {
+async function fetchGoogleEvents(accessToken: string, range: { timeMin: string; timeMax: string }, pageToken?: string): Promise<Response> {
+  return fetch(googleEventUrl(range, pageToken), {
     headers: { Authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(20_000),
   })
@@ -458,7 +460,7 @@ function normalizeEvent(item: z.infer<typeof googleEventSchema>): CalendarEvent 
     start: new Date(startMs).toISOString(),
     end: new Date(endMs).toISOString(),
     durationMinutes: allDay ? 0 : Math.round((endMs - startMs) / 60_000),
-    recurring: Boolean(item.recurringEventId),
+    ...(item.recurringEventId ? { recurringEventId: item.recurringEventId } : {}),
     allDay,
   }
 }
@@ -466,20 +468,36 @@ function normalizeEvent(item: z.infer<typeof googleEventSchema>): CalendarEvent 
 export async function listGoogleCalendarEvents(request: Request, env: Env): Promise<CalendarEventsResponse> {
   const range = calendarRange(request)
   let { session, token } = await authenticatedCredential(request, env)
-  let response = await fetchGoogleEvents(token.accessToken, range)
-  if (response.status === 401) {
-    token = await refreshCredential(session.userId, token, env)
-    response = await fetchGoogleEvents(token.accessToken, range)
+  const events: CalendarEvent[] = []
+  let pageToken: string | undefined
+
+  for (let page = 0; page < 10; page += 1) {
+    let response = await fetchGoogleEvents(token.accessToken, range, pageToken)
+    if (response.status === 401) {
+      token = await refreshCredential(session.userId, token, env)
+      response = await fetchGoogleEvents(token.accessToken, range, pageToken)
+    }
+    if (response.status === 401) throw new GoogleCalendarError('google_not_connected', 'Google Calendarの認証が無効です。再連携してください。', 401)
+    if (response.status === 403) throw new GoogleCalendarError('google_scope_denied', 'Google Calendarの読み取り権限がありません。再連携してください。', 403)
+    if (!response.ok || Number(response.headers.get('content-length') ?? 0) > 1_000_000) {
+      throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarから予定を取得できませんでした。', 502)
+    }
+    const responseText = await response.text()
+    if (responseText.length > 1_000_000) throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarの応答が大きすぎます。', 502)
+    let responseBody: unknown
+    try {
+      responseBody = JSON.parse(responseText)
+    } catch {
+      throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
+    }
+    const parsed = googleEventsSchema.safeParse(responseBody)
+    if (!parsed.success) throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
+    events.push(...(parsed.data.items ?? []).map(normalizeEvent).filter((event): event is CalendarEvent => Boolean(event)))
+    pageToken = parsed.data.nextPageToken
+    if (!pageToken) return { events, range }
   }
-  if (response.status === 401) throw new GoogleCalendarError('google_not_connected', 'Google Calendarの認証が無効です。再連携してください。', 401)
-  if (response.status === 403) throw new GoogleCalendarError('google_scope_denied', 'Google Calendarの読み取り権限がありません。再連携してください。', 403)
-  if (!response.ok || Number(response.headers.get('content-length') ?? 0) > 1_000_000) {
-    throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarから予定を取得できませんでした。', 502)
-  }
-  const parsed = googleEventsSchema.safeParse(await response.json())
-  if (!parsed.success) throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
-  const events = (parsed.data.items ?? []).map(normalizeEvent).filter((event): event is CalendarEvent => Boolean(event))
-  return { events, range }
+
+  throw new GoogleCalendarError('calendar_result_too_large', '過去28日間の予定が多すぎるため、全件を取得できませんでした。期間を短くして再試行してください。', 502)
 }
 
 export async function disconnectGoogleCalendar(request: Request, env: Env): Promise<void> {

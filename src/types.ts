@@ -1,36 +1,11 @@
 import type { WorkflowKind } from '../shared/design-schema'
 
-export type { BusinessDesign, BusinessTask, InterviewOptions, OutputRequirement, Rating } from '../shared/design-schema'
+export type { BusinessDesign, BusinessTask, ContextState, InterviewAnswer, InterviewPlan, InterviewQuestion, OutputRequirement, Rating, ValidationItem, WorkObservation } from '../shared/design-schema'
 export type { CalendarEvent, CalendarEventsResponse, CalendarStatus } from '../shared/calendar-schema'
+export type { ImprovementProject, ProjectStatus } from '../shared/project-schema'
+export type { DiscoverySummary, WorkGroup } from '../shared/work-group'
 
-export type Screen = 'home' | 'discovery' | 'interview' | 'review' | 'analysis' | 'redesign'
-
-export type DemoEvent = {
-  id: string
-  day: string
-  date: string
-  time: string
-  duration: number
-  title: string
-  category: string
-  recurring?: boolean
-  allDay?: boolean
-  start?: string
-  end?: string
-  source?: 'demo' | 'google'
-  candidate?: {
-    rank: number
-    level: 'HIGH' | 'MEDIUM'
-    reason: string
-  }
-}
-
-export type InterviewQuestion = {
-  id: 'purpose' | 'process' | 'exceptions' | 'outputNeed'
-  prompt: string
-  hint: string
-  options: string[]
-}
+export type Screen = 'home' | 'discovery' | 'interview' | 'review' | 'analysis' | 'redesign' | 'projects'
 
 export type WorkflowStep = {
   id: string

@@ -2,10 +2,10 @@ import { z } from 'zod'
 import {
   businessTaskSchema,
   designOutputSchemaFor,
-  interviewOptionsSchema,
+  interviewPlanSchema,
   type BusinessTask,
   type DesignOutput,
-  type InterviewOptions,
+  type InterviewPlan,
 } from '../shared/design-schema'
 
 const MODEL = 'deepseek-v4-flash'
@@ -120,111 +120,53 @@ async function generateJson<T>(apiKey: string, systemPrompt: string, userInput: 
   throw new DeepSeekError('invalid_output', 'DeepSeek output could not be repaired')
 }
 
-const businessTaskPrompt = `あなたはBusiness Process Redesignのための業務分析者です。ユーザーのカレンダー予定と4〜5問の回答から、確認できた情報だけでBusinessTaskを構造化します。
-必ず日本語のjsonだけを返してください。推測が必要な内容はconstraintsへ「未確認」として記録し、事実のように補完しないでください。
-purposeは「誰が、何を把握・判断・達成するか」という目的だけにしてください。レポート、報告書、資料、メール、Excel、PowerPointなどの成果物名・ツール名・現行手段を絶対に含めないでください。
-outputは現在作っている成果物です。purposeとoutputを混同しないでください。
-4問目からoutputRequirementを次のように決めてください。
-- 定期成果物は不要、重要な変化の通知だけでよい: NOT_REQUIRED
-- 必要なときにだけ確認・生成できればよい: ON_DEMAND
-- 法令、監査、定例会議などで定期成果物が必要: REQUIRED
-- 判断できない、未回答: UNKNOWN
-出力は次の型とキーだけを使ってください。stringと指定した項目を数値やobjectにしないでください。
+const businessTaskPrompt = `あなたはFlowShiftの業務コンテクスト整理役です。Calendarの観測事実と、ユーザー本人への質問・回答だけからBusinessTaskを構造化します。
+AIが業務を知っているふりをしてはいけません。回答にない内容は推測せず、配列は空、文字列は「未確認」、contextStatusはUNKNOWNにしてください。一部だけ分かる場合はPARTIALです。
+purposeは「誰が、何を把握・判断・達成するか」という目的だけにし、成果物名やツール名を含めません。outputは現在の手段・成果物です。
+observedは入力されたobservationを一字一句変えずに複製してください。frequencyとdurationは観測事実を自然な日本語にします。
+outputRequirementは回答から明示的に判断できる場合だけNOT_REQUIRED、ON_DEMAND、REQUIREDとし、それ以外はUNKNOWNです。
+contextStatusは、各情報が回答で確認できたかを項目ごとに示します。質問されていない項目は必ずUNKNOWNです。
+必ず次のキーだけを持つ日本語のjsonを返してください。
 {
-  "name": "string",
-  "purpose": "string",
-  "frequency": "string",
-  "duration": "string（例: 45分）",
-  "trigger": "string",
-  "consumer": "string",
-  "tools": ["string"],
-  "inputs": ["string"],
-  "output": "string",
-  "steps": ["string"],
-  "decisionPoints": ["string"],
-  "constraints": ["string"],
-  "outputRequirement": "NOT_REQUIRED | ON_DEMAND | REQUIRED | UNKNOWN",
-  "outputRequirementReason": "string"
-}
-すべての値を具体的にし、配列を空にしないでください。`
-
-const interviewOptionsPrompt = `あなたは業務ヒアリングの補助者です。予定名と所要時間から、ユーザーがキーボード入力せず選べる回答候補を作ります。
-必ず日本語のjsonだけを返してください。候補は断定ではなく、一般的にあり得る具体例にしてください。
-purpose候補にはレポート、報告書、資料、メール、Excel、PowerPointなどの成果物名・ツール名・現行手段を含めず、「誰が何を把握・判断するか」だけを書いてください。
-outputNeedは成果物を廃止できるか確認する4つの選択肢で、必ず下記の意味を1つずつ含めてください。
-出力は次の型とキーだけを使い、purpose、process、exceptionsには重複しない候補を3つ、outputNeedには4つ入れてください。
-{
-  "purpose": ["誰が何を判断するための業務か"],
-  "process": ["利用ツールと開始から共有までの流れ"],
-  "exceptions": ["人が判断する例外や条件"],
-  "outputNeed": [
-    "重要な変化があるときだけ通知されればよい",
-    "必要なときに確認できればよい",
-    "法令・監査上、定期的な成果物が必要",
-    "定例会議のため、毎回必要"
-  ]
+  "name":"string","observed":{"title":"string","occurrences":1,"totalMinutes":1,"averageMinutes":1,"firstOccurredAt":"RFC3339","lastOccurredAt":"RFC3339","recurring":true},
+  "purpose":"string","frequency":"string","duration":"string","trigger":"string",
+  "stakeholders":["string"],"consumer":"string","tools":["string"],"inputs":["string"],"output":"string",
+  "steps":["string"],"decisionPoints":["string"],"exceptions":["string"],"constraints":["string"],"dependencies":["string"],"risks":["string"],
+  "outputRequirement":"NOT_REQUIRED | ON_DEMAND | REQUIRED | UNKNOWN","outputRequirementReason":"string",
+  "contextStatus":{"purpose":"CONFIRMED | PARTIAL | UNKNOWN","stakeholders":"CONFIRMED | PARTIAL | UNKNOWN","process":"CONFIRMED | PARTIAL | UNKNOWN","decisions":"CONFIRMED | PARTIAL | UNKNOWN","exceptions":"CONFIRMED | PARTIAL | UNKNOWN","constraints":"CONFIRMED | PARTIAL | UNKNOWN","dependencies":"CONFIRMED | PARTIAL | UNKNOWN","risks":"CONFIRMED | PARTIAL | UNKNOWN","output":"CONFIRMED | PARTIAL | UNKNOWN"}
 }`
 
-const designPrompt = `あなたはBusiness Process Redesignの専門家です。仕事をAIに置き換えるのではなく、AI前提で仕事を作り直します。ユーザーが承認したBusinessTaskを変更せず、purpose（達成したい結果）とoutput（現在の手段）を明確に分離して設計してください。
+const interviewOptionsPrompt = `あなたはFlowShiftの業務ヒアリング設計役です。Calendarの観測事実は、質問を始める索引にすぎません。予定名から業務内容や廃止可否を推測しないでください。
+ユーザーが持つコンテクストを引き出すため、この業務に必要な質問を4〜8問だけ選びます。purpose、process、decision、outputNeedは必須です。必要に応じてstakeholders、exceptions、constraints、dependencies、risksを追加します。
+各質問には、キーボード入力を減らす3〜4個の具体的な回答候補を付けてください。候補の最後には必要に応じて「まだ分からない」を含め、断定を強制しません。
+purpose候補は成果物名・ツール名を含めず「誰が何を把握・判断・達成するか」にします。outputNeedでは、現行成果物・会議が本当に必要かを確認します。
+必ず次のキーだけを持つ日本語のjsonを返してください。
+{"questions":[{"id":"purpose | stakeholders | process | decision | exceptions | constraints | dependencies | risks | outputNeed","prompt":"string","hint":"string","options":["string","string","string"]}]}`
 
-最初に、現行成果物を廃止できるかをoutputRequirementで判断します。
-- NOT_REQUIRED: strategyはELIMINATE。定期レポート作成、毎回のレビュー・承認、定期メール配信を新工程へ絶対に含めない。通常時の人の定期作業は0分。データを継続監視し、重要な変化を検知し、原因候補と影響を整理し、必要なときだけ通知し、人が原因確認と施策判断を行う。必要時の説明は通知に含める。
-- ON_DEMAND: strategyはON_DEMANDまたはELIMINATE。定期成果物と定期確認をなくし、必要時だけ確認・生成する。通常時の人の定期作業は0分。
-- REQUIRED: strategyはAUTOMATEまたはKEEP。法令・監査・会議上の要件を守りながら工程を減らす。
-- UNKNOWN: strategyはAUTOMATEまたはKEEP。廃止を断定せず、成果物の必要性をunknownsへ入れる。
+const designPrompt = `あなたはFlowShiftの業務再設計パートナーです。目的は改善案を断定することではなく、ユーザーが確認したBusinessTaskから別の設計可能性と検証方法を提示することです。
+次の原則を厳守してください。
+- AIは最終判断者ではない。Calendar情報だけで廃止・自動化を断定しない。
+- factsは観測事実と回答済み事項だけ。成立条件はassumptions、判断前の不足情報はunknownsへ分ける。
+- constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXT、strategyはKEEPとし、廃止可否を判断できない旨とnextQuestionsを示す。
+- HYPOTHESIS_READYでもhypothesisは「〜であり、〜が存在しない場合、〜へ変更できる可能性がある」という条件付き表現にする。
+- 「この作業をAIで速くする」より「そもそもこの作業・成果物は必要か」を先に検討する。ただし不要と確認されていないものを消さない。
+- systemは決定論的な取得・通知、aiは意味整理・候補提示、人は確認・判断を担当する。
+- 時間は入力頻度を変換せず、根拠のない年間換算や精密値を作らない。
+- validationPlanは固定期間にせず、案に応じてPILOT、TECHNICAL_FEASIBILITY、OFFLINE_EVALUATION、REQUIREMENT_VALIDATION、STAKEHOLDER_REVIEWから必要な方法だけを選ぶ。
 
-conventionalは、現在の成果物を維持して自動化する従来案との比較用です。conventionalの工程をredesignへ流用しないでください。
-時間削減は補助指標です。頻度を勝手に週次・月次へ変換せず、年間削減時間を算出しないでください。数値効果は推定レンジとし、根拠のない精密な値を作らないでください。
-必ず日本語のjsonだけを返してください。トップレベルはanalysisとredesignです。
+必ず次のキーだけを持つ日本語のjsonを返してください。
 {
-  "analysis": {
-    "conclusion": "目的と成果物の必要性を踏まえた短い結論",
-    "purposeCheck": {
-      "outcome": "本来達成したい結果",
-      "currentMeans": "現在の手段・成果物",
-      "outputDecision": "成果物を廃止・必要時化・維持する判断と理由"
-    },
-    "problems": [{"value":"string","label":"string","detail":"string"}],
-    "ratings": {"opportunity":"HIGH | MEDIUM | LOW","implementation":"HIGH | MEDIUM | LOW","aiFit":"HIGH | MEDIUM | LOW"},
-    "ratingReasons": ["string"],
-    "facts": ["string"],
-    "assumptions": ["string"],
-    "unknowns": ["string"],
-    "conventional": {"summary":"string","steps":["string"]}
-  },
-  "redesign": {
-    "strategy": "ELIMINATE | ON_DEMAND | AUTOMATE | KEEP",
-    "headline": "編集された短い提案名",
-    "insight": "何を作る仕事から、何を判断する仕事へ変えるか",
-    "workflow": [{"label":"string","detail":"string","kind":"human | system | ai | decision | output"}],
-    "roles": {"system":["string"],"ai":["string"],"human":["string"]},
-    "metrics": {
-      "scheduledOutputBefore":"現在の定期成果物回数・頻度",
-      "scheduledOutputAfter":"見直し後の定期成果物回数・頻度",
-      "routineHumanWorkBefore":"現在の人の定期作業",
-      "routineHumanWorkAfter":"見直し後の人の定期作業",
-      "detectionBefore":"現在の変化検知タイミング",
-      "detectionAfter":"見直し後の変化検知タイミング",
-      "outputBefore":"現在の成果物",
-      "outputAfter":"見直し後の成果物"
-    },
-    "impact": {
-      "routineMinutesPerCycle": 0,
-      "exceptionMinutesMin": 5,
-      "exceptionMinutesMax": 10,
-      "confidence":"HIGH | MEDIUM | LOW",
-      "assumption":"推定の前提"
-    }
-  }
-}
-problemsは3〜5件、workflowは3〜7工程です。factsには入力に明記された事実だけを含め、実現可否が未確認の内容はassumptionsまたはunknownsへ分離してください。`
+  "analysis":{"readiness":"HYPOTHESIS_READY | NEEDS_CONTEXT","conclusion":"string","purposeCheck":{"outcome":"string","currentMeans":"string","outputDecision":"string"},"problems":[{"value":"string","label":"string","detail":"string"}],"ratings":{"opportunity":"HIGH | MEDIUM | LOW","implementation":"HIGH | MEDIUM | LOW","aiFit":"HIGH | MEDIUM | LOW"},"ratingReasons":["string"],"facts":["string"],"assumptions":["string"],"unknowns":["string"],"nextQuestions":["string"],"conventional":{"summary":"string","steps":["string"]}},
+  "redesign":{"strategy":"ELIMINATE | ON_DEMAND | AUTOMATE | KEEP","hypothesis":"条件付きの再設計仮説","headline":"短い仮説名","insight":"現在の仕事から何を判断する仕事へ変える可能性か","workflow":[{"label":"string","detail":"string","kind":"human | system | ai | decision | output"}],"roles":{"system":["string"],"ai":["string"],"human":["string"]},"metrics":{"scheduledOutputBefore":"string","scheduledOutputAfter":"string","routineHumanWorkBefore":"string","routineHumanWorkAfter":"string","detectionBefore":"string","detectionAfter":"string","outputBefore":"string","outputAfter":"string"},"impact":{"routineMinutesPerCycle":0,"exceptionMinutesMin":0,"exceptionMinutesMax":0,"confidence":"HIGH | MEDIUM | LOW","assumption":"string"}},
+  "validationPlan":{"summary":"string","items":[{"type":"PILOT | TECHNICAL_FEASIBILITY | OFFLINE_EVALUATION | REQUIREMENT_VALIDATION | STAKEHOLDER_REVIEW","title":"string","description":"string","checks":["string"]}]}
+}`
 
 export async function extractBusinessTask(apiKey: string, input: unknown): Promise<DeepSeekResult<BusinessTask>> {
   return generateJson(apiKey, businessTaskPrompt, input, businessTaskSchema)
 }
 
-export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewOptions>> {
-  return generateJson(apiKey, interviewOptionsPrompt, input, interviewOptionsSchema, 1200)
+export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewPlan>> {
+  return generateJson(apiKey, interviewOptionsPrompt, input, interviewPlanSchema, 2200)
 }
 
 export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<DesignOutput>> {
