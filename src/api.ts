@@ -81,7 +81,7 @@ function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>, method =
   })
 }
 
-function observationFrom(group: WorkGroup): WorkObservation {
+export function observationFrom(group: WorkGroup): WorkObservation {
   return {
     title: group.title,
     occurrences: group.occurrences,

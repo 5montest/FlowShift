@@ -78,6 +78,42 @@ export function isDiscoveryCandidate(group: WorkGroup): boolean {
   return group.occurrences >= 2 || group.totalMinutes >= 60 || ['資料作成', 'データ処理'].includes(group.category)
 }
 
+// 声かけ（アプリから先に話しかける）対象の選定。
+// isDiscoveryCandidateはほぼ全件を通すため、ここではより強い条件で絞り込む：
+// ①除外タイトル（保存済みプロジェクト等）を外す ②繰り返し3回以上、または合計2時間以上
+// ③1人で完結しやすい資料作成・データ処理を優先し、同点は合計時間の多い順。
+export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iterable<string> = []): WorkGroup[] {
+  const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
+  const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
+    && ((group.occurrences >= 3 && group.evidence.recurring) || group.totalMinutes >= 120))
+  const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)
+  return [...eligible].sort((left, right) => soloFriendly(right) - soloFriendly(left)
+    || right.totalMinutes - left.totalMinutes
+    || right.occurrences - left.occurrences)
+}
+
+export type WorkReduction = {
+  baselineOccurrences: number
+  baselineMinutes: number
+  currentOccurrences: number
+  currentMinutes: number
+  deltaMinutes: number
+}
+
+// 採用した仮説の「どのくらい減ったか」。保存時点の観測値と、直近4週間の同名業務を突き合わせる。
+// カレンダーから消えた業務は0回（全削減）として扱う。
+export function computeReduction(baseline: { title: string; occurrences: number; totalMinutes: number }, currentGroups: WorkGroup[]): WorkReduction {
+  const key = normalizeWorkTitle(baseline.title)
+  const current = currentGroups.find((group) => normalizeWorkTitle(group.title) === key)
+  return {
+    baselineOccurrences: baseline.occurrences,
+    baselineMinutes: baseline.totalMinutes,
+    currentOccurrences: current?.occurrences ?? 0,
+    currentMinutes: current?.totalMinutes ?? 0,
+    deltaMinutes: baseline.totalMinutes - (current?.totalMinutes ?? 0),
+  }
+}
+
 export function summarizeWorkGroups(groups: WorkGroup[]): DiscoverySummary {
   return {
     calendarMinutes: groups.reduce((total, group) => total + group.totalMinutes, 0),

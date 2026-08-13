@@ -109,3 +109,9 @@ export function questionForContext(key: keyof BusinessTask['contextStatus']): In
   }
   return { phase: 'FOLLOW_UP', questions: [{ ...base, ...definitions[key] }] }
 }
+
+// LLMによる質問生成が使えないときに、即座にインタビューを始めるための汎用Core 3問。
+export function fallbackCorePlan(): InterviewPlan {
+  const pick = (key: keyof BusinessTask['contextStatus'], id: string) => ({ ...questionForContext(key).questions[0], id, phase: 'CORE' as const })
+  return { phase: 'CORE', questions: [pick('purpose', 'core-purpose'), pick('decisions', 'core-decision'), pick('output', 'core-output')] }
+}
