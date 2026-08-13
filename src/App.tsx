@@ -3,6 +3,7 @@ import { fallbackCorePlan } from '../shared/context-questions'
 import { createDeterministicTask } from '../shared/interview'
 import { projectContext, projectName } from '../shared/project-schema'
 import { applyCategories, groupCalendarEvents, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
+import type { UserProfile } from '../shared/profile-schema'
 import {
   ApiError,
   classifyWork,
@@ -17,6 +18,8 @@ import {
   getGoogleCalendarEvents,
   getGoogleCalendarStatus,
   getImprovementProjects,
+  getProfile,
+  saveProfile,
   updateImprovementProject,
   updateImprovementProjectContext,
   updateImprovementProjectStatus,
@@ -24,7 +27,8 @@ import {
 import AppHeader from './components/AppHeader'
 import { mergeCategoryCache, readCategoryCache } from './lib/categories'
 import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
-import { listMutedWork, muteWork, unmuteWork } from './lib/preferences'
+import { listMutedWork, markProfilePrompted, muteWork, profilePrompted, unmuteWork } from './lib/preferences'
+import ProfileDialog from './components/ProfileDialog'
 import ConnectScreen from './screens/ConnectScreen'
 import WorkspaceScreen from './screens/WorkspaceScreen'
 import SessionScreen from './screens/SessionScreen'
@@ -93,6 +97,8 @@ export default function App() {
   const [savedProject, setSavedProject] = useState<ImprovementProject | null>(null)
   const [drafts, setDrafts] = useState<SessionDraft[]>(() => listDrafts())
   const [mutedWork, setMutedWork] = useState<Set<string>>(() => listMutedWork())
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [showProfileDialog, setShowProfileDialog] = useState(false)
 
   // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
   const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
@@ -142,10 +148,10 @@ export default function App() {
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
-  function prefetchPlan(group: WorkGroup): Promise<InterviewPlan> {
+  function prefetchPlan(group: WorkGroup, userProfile: UserProfile | null): Promise<InterviewPlan> {
     const cached = planCache.current.get(group.id)
     if (cached) return cached
-    const promise = generateInterviewPlan(group)
+    const promise = generateInterviewPlan(group, userProfile)
     promise.catch(() => planCache.current.delete(group.id))
     planCache.current.set(group.id, promise)
     return promise
@@ -171,10 +177,10 @@ export default function App() {
 
   // regex分類のままのタイトルをAIに分類させ、返ってきたら差し替える。
   // タイトルキーの上書きなので、途中で再読込されても安全（冪等）。
-  function refineCategoriesInBackground(groups: WorkGroup[], cached: Record<string, WorkCategory>) {
+  function refineCategoriesInBackground(groups: WorkGroup[], cached: Record<string, WorkCategory>, userProfile: UserProfile | null) {
     const unclassified = [...new Set(groups.filter((group) => !(normalizeWorkTitle(group.title) in cached)).map((group) => group.title))].slice(0, 100)
     if (!unclassified.length) return
-    void classifyWork(unclassified)
+    void classifyWork(unclassified, userProfile)
       .then((map) => {
         mergeCategoryCache(map)
         setGroups((current) => applyCategories(current, map))
@@ -187,12 +193,18 @@ export default function App() {
   async function loadWorkspace() {
     setCalendarBusy(true); setCalendarError('')
     try {
-      const [calendarResult, savedProjects] = await Promise.all([getGoogleCalendarEvents(), getImprovementProjects()])
+      const [calendarResult, savedProjects, userProfile] = await Promise.all([
+        getGoogleCalendarEvents(),
+        getImprovementProjects(),
+        getProfile().catch(() => null),
+      ])
       const cachedCategories = readCategoryCache()
       const nextGroups = applyCategories(groupCalendarEvents(calendarResult.events), cachedCategories)
       planCache.current.clear()
       setGroups(nextGroups)
-      refineCategoriesInBackground(nextGroups, cachedCategories)
+      setProfile(userProfile)
+      if (!userProfile && !profilePrompted()) setShowProfileDialog(true)
+      refineCategoriesInBackground(nextGroups, cachedCategories, userProfile)
       setCalendarRange(calendarResult.range ?? null)
       setFetchedAt(new Date())
       setProjects(savedProjects)
@@ -201,7 +213,7 @@ export default function App() {
       const activeTitles = savedProjects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title)
       const focus = rankDiscoveryCandidates(nextGroups, [...activeTitles, ...mutedWork])[0]
       // 下書きがあるなら質問はその中にあるので先読みしない
-      if (focus && !loadDraft(focus.id)) prefetchPlan(focus).catch(() => {})
+      if (focus && !loadDraft(focus.id)) prefetchPlan(focus, userProfile).catch(() => {})
     } catch (error) {
       if (isReconnectError(error)) setNeedsReconnect(true)
       setCalendarError(error instanceof Error ? error.message : 'ワークスペースを読み込めませんでした。')
@@ -263,7 +275,7 @@ export default function App() {
       let nextPlan: InterviewPlan
       let source: 'ai' | 'generic' = 'ai'
       try {
-        nextPlan = await prefetchPlan(group)
+        nextPlan = await prefetchPlan(group, profile)
       } catch {
         nextPlan = fallbackCorePlan()
         source = 'generic'
@@ -355,7 +367,7 @@ export default function App() {
     const token = sessionToken.current
     setFlow((current) => ({ ...current, design: null, designError: '', refining: false }))
     try {
-      const nextDesign = await generateBusinessDesign(forTask)
+      const nextDesign = await generateBusinessDesign(forTask, profile)
       if (sessionToken.current === token) setFlow((current) => ({ ...current, design: nextDesign }))
     } catch (error) {
       const message = error instanceof Error ? error.message : '仮説を作成できませんでした。'
@@ -419,7 +431,7 @@ export default function App() {
     if (!savedProject) return
     const token = sessionToken.current
     try {
-      const nextDesign = await generateBusinessDesign(projectContext(savedProject))
+      const nextDesign = await generateBusinessDesign(projectContext(savedProject), profile)
       const project = await updateImprovementProject(savedProject.id, nextDesign, '追加した業務情報を反映して仮説を更新')
       if (sessionToken.current !== token) return
       setSavedProject(project)
@@ -444,6 +456,18 @@ export default function App() {
     clearSession()
     setSavedProject(project)
     setScreen('note')
+  }
+
+  async function handleSaveProfile(next: UserProfile) {
+    const saved = await saveProfile(next)
+    setProfile(saved)
+    markProfilePrompted()
+    setShowProfileDialog(false)
+  }
+
+  function handleSkipProfile() {
+    markProfilePrompted()
+    setShowProfileDialog(false)
   }
 
   function handleMuteWork(title: string) {
@@ -495,12 +519,13 @@ export default function App() {
   }
 
   return <div className="app-shell">
-    <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} />
+    <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} email={calendar.connected ? calendar.email : undefined} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} onOpenProfile={() => setShowProfileDialog(true)} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
     {screen === 'workspace' && <WorkspaceScreen email={calendar.email} groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onDisconnect={disconnect} />}
     {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}
+    {showProfileDialog && calendar.connected && <ProfileDialog profile={profile} onSave={handleSaveProfile} onSkip={handleSkipProfile} />}
     {showRestartConfirm && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-heading"><h2 id="restart-heading">最初からやり直しますか？</h2><p>この業務の下書きを削除して、最初の質問からやり直します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setShowRestartConfirm(false)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { setShowRestartConfirm(false); restartSession() }}>やり直す</button></div></section></div>}
   </div>
 }

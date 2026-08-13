@@ -16,6 +16,7 @@ import {
   type ImprovementProject,
   type ProjectStatus,
 } from '../shared/project-schema'
+import { userProfileSchema, type UserProfile } from '../shared/profile-schema'
 import { normalizeWorkTitle, toObservation, workCategorySchema, type WorkCategory, type WorkGroup } from '../shared/work-group'
 
 const apiErrorSchema = z.object({
@@ -107,15 +108,27 @@ export async function disconnectGoogleCalendar(): Promise<void> {
   throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'Google Calendarとの接続を解除できませんでした。')
 }
 
-export async function classifyWork(titles: string[]): Promise<Record<string, WorkCategory>> {
-  const result = await postJson('/api/classify-work', { titles }, classifyResponseSchema)
+export async function classifyWork(titles: string[], profile?: UserProfile | null): Promise<Record<string, WorkCategory>> {
+  const result = await postJson('/api/classify-work', { titles, ...(profile ? { profile } : {}) }, classifyResponseSchema)
   const map: Record<string, WorkCategory> = {}
   for (const item of result.categories) map[normalizeWorkTitle(item.title)] = item.category
   return map
 }
 
-export async function generateInterviewPlan(group: WorkGroup): Promise<InterviewPlan> {
-  const result = await postJson('/api/interview-options', { observation: toObservation(group) }, interviewPlanResponseSchema)
+const profileResponseSchema = z.object({ profile: userProfileSchema.nullable() }).strict()
+
+export async function getProfile(): Promise<UserProfile | null> {
+  const result = await requestJson('/api/profile', profileResponseSchema)
+  return result.profile
+}
+
+export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
+  const result = await postJson('/api/profile', profile, z.object({ profile: userProfileSchema }).strict(), 'PUT')
+  return result.profile
+}
+
+export async function generateInterviewPlan(group: WorkGroup, profile?: UserProfile | null): Promise<InterviewPlan> {
+  const result = await postJson('/api/interview-options', { observation: toObservation(group), ...(profile ? { profile } : {}) }, interviewPlanResponseSchema)
   return result.options
 }
 
@@ -133,8 +146,8 @@ export async function generateFollowUpPlan(businessTask: BusinessTask): Promise<
   return result.plan
 }
 
-export async function generateBusinessDesign(businessTask: BusinessTask): Promise<BusinessDesign> {
-  const result = await postJson('/api/design', { businessTask }, designResponseSchema)
+export async function generateBusinessDesign(businessTask: BusinessTask, profile?: UserProfile | null): Promise<BusinessDesign> {
+  const result = await postJson('/api/design', { businessTask, ...(profile ? { profile } : {}) }, designResponseSchema)
   return result.design
 }
 

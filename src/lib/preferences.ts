@@ -46,3 +46,22 @@ export function unmuteWork(title: string): Set<string> {
   writeSet(titles)
   return titles
 }
+
+// 初回プロフィールヒアリングを一度出したか（スキップ後に毎回出さないため）
+const PROFILE_PROMPTED_KEY = 'flowshift.profile-prompted.v1'
+
+export function profilePrompted(): boolean {
+  try {
+    return window.localStorage.getItem(PROFILE_PROMPTED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function markProfilePrompted() {
+  try {
+    window.localStorage.setItem(PROFILE_PROMPTED_KEY, '1')
+  } catch {
+    // noop
+  }
+}

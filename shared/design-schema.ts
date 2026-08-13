@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { userProfileSchema } from './profile-schema.ts'
 
 const shortText = z.string().trim().min(1).max(240)
 const sentence = z.string().trim().min(1).max(800)
@@ -110,7 +111,10 @@ export const interviewAnswerSchema = z.object({
   }
 })
 
-export const interviewOptionsRequestSchema = z.object({ observation: workObservationSchema }).strict()
+export const interviewOptionsRequestSchema = z.object({
+  observation: workObservationSchema,
+  profile: userProfileSchema.optional(),
+}).strict()
 
 // 文脈10次元の唯一の定義はcontextDimensionSchema。contextStatusのキーをそこから
 // 生成することで、次元名とステータスキーが二度と乖離しないようにする。
@@ -263,7 +267,10 @@ export const interviewRequestSchema = z.object({
 }).strict()
 
 export const followUpRequestSchema = z.object({ businessTask: businessTaskSchema }).strict()
-export const designRequestSchema = z.object({ businessTask: businessTaskSchema }).strict()
+export const designRequestSchema = z.object({
+  businessTask: businessTaskSchema,
+  profile: userProfileSchema.optional(),
+}).strict()
 
 export type BusinessTaskDraft = z.infer<typeof businessTaskDraftSchema>
 export type BusinessTask = z.infer<typeof businessTaskSchema>

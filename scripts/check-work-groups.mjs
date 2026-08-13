@@ -53,4 +53,14 @@ assert.ok(!workClassificationRequestSchema.safeParse({ titles: [] }).success)
 assert.ok(workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '会議' }] }).success)
 assert.ok(!workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '謎分類' }] }).success)
 
+// プロフィールのプロンプト補間行
+const { profileSummaryLine } = await import('../shared/profile-schema.ts')
+assert.equal(profileSummaryLine(undefined), '')
+assert.equal(profileSummaryLine({}), '')
+assert.equal(
+  profileSummaryLine({ jobType: '開発・エンジニア', roleLevel: 'メンバー', workStart: '09:00', workEnd: '18:00', holidayPattern: '土日祝で固定' }),
+  'ユーザー情報：職種=開発・エンジニア、役職=メンバー、所定労働=09:00〜18:00、休み=土日祝で固定',
+)
+assert.equal(profileSummaryLine({ jobType: '営業' }), 'ユーザー情報：職種=営業')
+
 console.log('WorkGroup checks passed')

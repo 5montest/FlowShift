@@ -28,6 +28,12 @@ assert.ok([401, 503].includes(calendarEventsResponse.status), `Unauthenticated c
 const disconnectResponse = await fetch(`${baseUrl}/api/google/disconnect`, { method: 'POST' })
 assert.equal(disconnectResponse.status, 403, 'Calendar disconnect must reject a missing Origin header')
 
+// プロフィール：ローカルはセッション無しでGETがnull、PUTはOrigin検査で拒否される
+const profileResponse = await fetch(`${baseUrl}/api/profile`)
+assert.equal(profileResponse.status, 200)
+const putProfileResponse = await fetch(`${baseUrl}/api/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobType: '営業' }) })
+assert.equal(putProfileResponse.status, 403, 'Profile update must reject a missing Origin header')
+
 if (process.argv.includes('--skip-ai')) {
   console.log('Local HTTP, Calendar auth boundary, and origin checks passed')
   process.exit(0)

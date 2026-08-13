@@ -11,6 +11,7 @@ import {
   type InterviewRequest,
 } from '../shared/design-schema.ts'
 import { finalizeBusinessTask } from '../shared/interview.ts'
+import { profileSummaryLine, type UserProfile } from '../shared/profile-schema.ts'
 import { workClassificationResponseSchema } from '../shared/work-group.ts'
 
 // プロンプト内の出力形式はZodスキーマから生成する（手書き転記による乖離を防ぐ）。
@@ -194,7 +195,13 @@ export async function extractBusinessTask(apiKey: string, input: InterviewReques
   return { ...result, value: finalizeBusinessTask(input.observation, input.answers, result.value) }
 }
 
-const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カレンダーの予定タイトルだけを手がかりに、各タイトルを次の7分類のいずれか1つへ割り当てます。
+// プロフィール（職種・役職・勤務形態）が設定されていれば、プロンプト先頭に文脈として補間する
+function withProfile(prompt: string, profile: UserProfile | undefined): string {
+  const line = profileSummaryLine(profile)
+  return line ? `${line}\n${prompt}` : prompt
+}
+
+const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カレンダーの予定タイトルだけを手がかりに、各タイトルを次の7分類のいずれか1つへ割り当てます。ユーザー情報があれば、その職種で一般的な業務を優先して解釈し、所定労働時間外や休みの日らしい予定は休憩・私用の可能性を考慮してください。
 - 会議: 定例・打ち合わせ・1on1・面談など、人が同期的に集まる予定
 - 資料作成: レポート・提案書・ドキュメントなどの作成
 - データ処理: 入力・登録・更新・転記・集計などの事務処理
@@ -206,12 +213,12 @@ const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カ�
 入力のtitles配列の各要素について、titleを一字一句そのまま返し、categoryを割り当ててください。
 ${schemaInstruction(workClassificationResponseSchema)}`
 
-export async function classifyWork(apiKey: string, titles: string[]): Promise<DeepSeekResult<z.infer<typeof workClassificationResponseSchema>>> {
-  return generateJson(apiKey, classifyWorkPrompt, { titles }, workClassificationResponseSchema, 4000)
+export async function classifyWork(apiKey: string, titles: string[], profile?: UserProfile): Promise<DeepSeekResult<z.infer<typeof workClassificationResponseSchema>>> {
+  return generateJson(apiKey, withProfile(classifyWorkPrompt, profile), { titles }, workClassificationResponseSchema, 4000)
 }
 
-export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewPlan>> {
-  return generateJson(apiKey, interviewOptionsPrompt, input, interviewPlanSchema, 2600)
+export async function createInterviewOptions(apiKey: string, input: { observation: unknown; profile?: UserProfile }): Promise<DeepSeekResult<InterviewPlan>> {
+  return generateJson(apiKey, withProfile(interviewOptionsPrompt, input.profile), { observation: input.observation }, interviewPlanSchema, 2600)
 }
 
 export async function createFollowUpQuestions(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<InterviewPlan>> {
@@ -251,8 +258,8 @@ function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput
   })
 }
 
-export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<DesignOutput>> {
-  const result = await generateJson(apiKey, designPromptFor(businessTask), { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
+export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask, profile?: UserProfile): Promise<DeepSeekResult<DesignOutput>> {
+  const result = await generateJson(apiKey, withProfile(designPromptFor(businessTask), profile), { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
   return { ...result, value: finalizeBusinessDesign(businessTask, result.value) }
 }
 

@@ -1,15 +1,17 @@
 import { z } from 'zod'
 import type { CalendarEvent } from './calendar-schema'
 import { workObservationSchema, type WorkObservation } from './design-schema.ts'
+import { userProfileSchema } from './profile-schema.ts'
 
 // 分類の種類はアプリが固定する（AIに種類を発明させない＝週次比較が揺れない）。
 // 既存5値は保存済みデータ・下書きとの互換のため改名しない。
 export const workCategorySchema = z.enum(['会議', '資料作成', 'データ処理', '顧客対応', '開発・制作', '休憩・私用', 'その他'])
 export type WorkCategory = z.infer<typeof workCategorySchema>
 
-// タイトル→分類のAI割り当てAPI（タイトル以外は送らない）
+// タイトル→分類のAI割り当てAPI（タイトルとプロフィール以外は送らない）
 export const workClassificationRequestSchema = z.object({
   titles: z.array(z.string().trim().min(1).max(500)).min(1).max(100),
+  profile: userProfileSchema.optional(),
 }).strict()
 
 export const workClassificationResponseSchema = z.object({

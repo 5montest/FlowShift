@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
 import { createProjectRequestSchema, improvementProjectSchema, parseStoredProject, projectListSchema, projectName, updateProjectRequestSchema, type ImprovementProject } from '../shared/project-schema'
+import { userProfileSchema } from '../shared/profile-schema'
 import { workClassificationRequestSchema } from '../shared/work-group'
 import { classifyWork, createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
@@ -48,7 +49,7 @@ const aiPaths = new Set(['/api/interview-options', '/api/follow-up-questions', '
 // セッションはここで一度だけ解決し、各ルートはc.get('session')を読む
 app.use('/api/*', async (c, next) => {
   const path = new URL(c.req.url).pathname
-  const needsSession = aiPaths.has(path) || path.startsWith('/api/projects')
+  const needsSession = aiPaths.has(path) || path.startsWith('/api/projects') || path === '/api/profile'
   const session = needsSession ? await getGoogleSession(c.req.raw, c.env) : null
   c.set('session', session)
   if (needsSession && !isLocalRequest(c.req.raw) && !session) {
@@ -127,7 +128,7 @@ function aiRoute<Schema extends z.ZodType>(path: string, schema: Schema, run: (a
 }
 
 aiRoute('/api/interview-options', interviewOptionsRequestSchema, async (apiKey, input) => {
-  const result = await createInterviewOptions(apiKey, input)
+  const result = await createInterviewOptions(apiKey, { observation: input.observation, profile: input.profile })
   return { body: { options: result.value }, usage: result.usage }
 })
 aiRoute('/api/business-task', interviewRequestSchema, async (apiKey, input) => {
@@ -139,12 +140,37 @@ aiRoute('/api/follow-up-questions', followUpRequestSchema, async (apiKey, input)
   return { body: { plan: result.value }, usage: result.usage }
 })
 aiRoute('/api/design', designRequestSchema, async (apiKey, input) => {
-  const result = await createBusinessDesign(apiKey, input.businessTask)
+  const result = await createBusinessDesign(apiKey, input.businessTask, input.profile)
   return { body: { design: { businessTask: input.businessTask, ...result.value } }, usage: result.usage }
 })
 aiRoute('/api/classify-work', workClassificationRequestSchema, async (apiKey, input) => {
-  const result = await classifyWork(apiKey, input.titles)
+  const result = await classifyWork(apiKey, input.titles, input.profile)
   return { body: { categories: result.value.categories }, usage: result.usage }
+})
+
+app.get('/api/profile', async (c) => {
+  const session = c.get('session')
+  if (!session) return c.json({ profile: null }, 200, { 'Cache-Control': 'no-store' })
+  const row = await c.env.DB.prepare('SELECT profile_json FROM users WHERE id = ?').bind(session.userId).first<{ profile_json: string | null }>()
+  if (!row?.profile_json) return c.json({ profile: null }, 200, { 'Cache-Control': 'no-store' })
+  try {
+    const parsed = userProfileSchema.safeParse(JSON.parse(row.profile_json))
+    return c.json({ profile: parsed.success ? parsed.data : null }, 200, { 'Cache-Control': 'no-store' })
+  } catch {
+    return c.json({ profile: null }, 200, { 'Cache-Control': 'no-store' })
+  }
+})
+
+app.put('/api/profile', async (c) => {
+  const requestId = crypto.randomUUID()
+  const guarded = mutationGuard(c, requestId)
+  if (guarded) return guarded
+  const session = c.get('session')
+  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
+  const input = userProfileSchema.safeParse(await c.req.json<unknown>().catch(() => null))
+  if (!input.success) return errorResponse('invalid_request', 'プロフィールの内容を確認できませんでした。', requestId, 400)
+  await c.env.DB.prepare('UPDATE users SET profile_json = ? WHERE id = ?').bind(JSON.stringify(input.data), session.userId).run()
+  return c.json({ profile: input.data }, 200, { 'Cache-Control': 'no-store' })
 })
 
 app.get('/api/projects', async (c) => {
