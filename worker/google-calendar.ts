@@ -53,14 +53,15 @@ const jwtPayloadSchema = z.object({
   azp: z.string().optional(),
   sub: z.string().min(1).max(255),
   email: z.string().email().optional(),
-  picture: z.string().url().max(1024).optional(),
+  // pictureの不備でログイン自体を失敗させない（Googleのアバター URLは1KBを超えることがある）
+  picture: z.string().url().max(4096).optional().catch(undefined),
   exp: z.number().int().positive(),
   iat: z.number().int().positive(),
 }).passthrough()
 
 const userinfoSchema = z.object({
-  email: z.string().email().optional(),
-  picture: z.string().url().max(1024).optional(),
+  email: z.string().email().optional().catch(undefined),
+  picture: z.string().url().max(4096).optional().catch(undefined),
 }).passthrough()
 
 const certsSchema = z.object({
