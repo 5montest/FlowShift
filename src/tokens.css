@@ -1,0 +1,93 @@
+:root {
+  color-scheme: light;
+
+  /* Color: neutral foundation + FlowShift semantic roles */
+  --fs-color-canvas: #f4f6f8;
+  --fs-color-surface: #ffffff;
+  --fs-color-surface-subtle: #f7f8fa;
+  --fs-color-surface-muted: #eef1f4;
+  --fs-color-text: #1a1a1c;
+  --fs-color-text-secondary: #41464b;
+  --fs-color-text-muted: #626970;
+  --fs-color-border: #d9dde2;
+  --fs-color-border-soft: #e5e8eb;
+  --fs-color-border-medium: #c7ccd2;
+  --fs-color-border-control: #aeb4bb;
+  --fs-color-border-strong: #858c94;
+  --fs-color-rule: #1a1a1c;
+  --fs-color-brand: #003e8f;
+  --fs-color-brand-hover: #002a66;
+  --fs-color-brand-soft: #e8f1fb;
+  --fs-color-inverse: #f5f8fc;
+  --fs-color-inverse-muted: #bdc9d8;
+  --fs-color-inverse-surface: #122238;
+  --fs-color-inverse-border: rgba(255, 255, 255, .2);
+  --fs-color-inverse-border-soft: rgba(255, 255, 255, .14);
+  --fs-color-inverse-border-medium: rgba(255, 255, 255, .18);
+  --fs-color-inverse-border-strong: rgba(255, 255, 255, .24);
+  --fs-color-backdrop: rgba(18, 34, 56, .5);
+  --fs-color-highlight: #c7f36b;
+  --fs-color-danger: #8b2b24;
+  --fs-color-danger-soft: #f1e1df;
+  --fs-color-fact: #006e5f;
+  --fs-color-assumption: #80601e;
+  --fs-color-assumption-soft: #f5f0e7;
+  --fs-color-unknown: #7b4c48;
+  --fs-color-system: #006f9c;
+  --fs-color-system-soft: #e8f1f5;
+  --fs-color-ai: #765887;
+  --fs-color-ai-soft: #f0e9f3;
+  --fs-color-human: #3c711e;
+  --fs-color-human-soft: #e9f3e6;
+  --fs-color-decision: #99701e;
+  --fs-color-decision-soft: #f6eed7;
+  --fs-color-output: #8b653e;
+  --fs-color-output-soft: #f4eadf;
+
+  /* Typography: Display / Standard / Dense / Oneline roles */
+  --fs-font-family: Inter, "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+  --fs-type-display-size: clamp(2.5rem, 4.8vw, 4.5rem);
+  --fs-type-home-title-size: clamp(2.75rem, 4.7vw, 4rem);
+  --fs-type-page-size: clamp(2rem, 3.4vw, 2.5rem);
+  --fs-type-workspace-page-size: clamp(1.875rem, 3.3vw, 2.625rem);
+  --fs-type-project-page-size: clamp(2rem, 3.5vw, 2.75rem);
+  --fs-type-domain-title-size: clamp(1.75rem, 3vw, 2.375rem);
+  --fs-type-hero-section-size: clamp(1.75rem, 3vw, 2.5rem);
+  --fs-type-page-compact-size: 1.875rem;
+  --fs-type-hero-compact-size: 2.125rem;
+  --fs-type-hero-medium-size: 2.5rem;
+  --fs-type-metric-large-size: 1.75rem;
+  --fs-type-metric-size: 1.625rem;
+  --fs-type-heading-size: 1.5rem;
+  --fs-type-section-size: 1.375rem;
+  --fs-type-title-size: 1.25rem;
+  --fs-type-model-root-size: 1.1875rem;
+  --fs-type-subheading-size: 1.125rem;
+  --fs-type-lead-size: 1.0625rem;
+  --fs-type-caption-size: .8125rem;
+  --fs-type-body-size: 1rem;
+  --fs-type-compact-size: .9375rem;
+  --fs-type-body-leading: 1.7;
+  --fs-type-dense-size: .875rem;
+  --fs-type-dense-leading: 1.3;
+  --fs-type-oneline-leading: 1;
+
+  /* A single 4px spacing scale */
+  --fs-space-1: .25rem;
+  --fs-space-2: .5rem;
+  --fs-space-3: .75rem;
+  --fs-space-4: 1rem;
+  --fs-space-5: 1.5rem;
+  --fs-space-6: 2rem;
+  --fs-space-7: 2.5rem;
+  --fs-space-8: 3rem;
+  --fs-space-9: 4rem;
+
+  --fs-radius-sm: 3px;
+  --fs-radius-md: 4px;
+  --fs-shadow-overlay: 0 12px 30px rgba(18, 34, 56, .14);
+  --fs-shadow-dialog: 0 24px 70px rgba(18, 34, 56, .24);
+  --fs-motion-spin-duration: 800ms;
+  --fs-content-wide: 1320px;
+  --fs-content-workspace: 1240px;
+}

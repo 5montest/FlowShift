@@ -1,15 +1,29 @@
 import { z } from 'zod'
 import {
-  businessTaskSchema,
+  businessTaskDraftSchema,
+  businessTaskDraftSchemaFor,
+  designOutputSchema,
   designOutputSchemaFor,
-  interviewOptionsSchema,
+  interviewPlanSchema,
   type BusinessTask,
+  type BusinessTaskDraft,
   type DesignOutput,
-  type InterviewOptions,
-} from '../shared/design-schema'
+  type InterviewPlan,
+  type InterviewRequest,
+  type WorkObservation,
+} from '../shared/design-schema.ts'
+import { finalizeBusinessTask } from '../shared/interview.ts'
+import { profileSummaryLine, type UserProfile } from '../shared/profile-schema.ts'
+import { workClassificationResponseSchema } from '../shared/work-group.ts'
+
+// プロンプト内の出力形式はZodスキーマから生成する（手書き転記による乖離を防ぐ）。
+// refine/superRefineはJSON Schemaに現れないが、応答はZodで検証され修復ループが働く。
+function schemaInstruction(schema: z.ZodType): string {
+  return `必ず次のJSON Schemaに厳密に従う日本語のjsonだけを返してください。\n${JSON.stringify(z.toJSONSchema(schema))}`
+}
 
 const MODEL = 'deepseek-v4-flash'
-const ENDPOINT = 'https://api.deepseek.com/chat/completions'
+const ENDPOINT = 'https://api.deepseek.com/v1/chat/completions'
 
 const completionSchema = z.object({
   choices: z.array(z.object({
@@ -120,115 +134,171 @@ async function generateJson<T>(apiKey: string, systemPrompt: string, userInput: 
   throw new DeepSeekError('invalid_output', 'DeepSeek output could not be repaired')
 }
 
-const businessTaskPrompt = `あなたはBusiness Process Redesignのための業務分析者です。ユーザーのカレンダー予定と4〜5問の回答から、確認できた情報だけでBusinessTaskを構造化します。
-必ず日本語のjsonだけを返してください。推測が必要な内容はconstraintsへ「未確認」として記録し、事実のように補完しないでください。
-purposeは「誰が、何を把握・判断・達成するか」という目的だけにしてください。レポート、報告書、資料、メール、Excel、PowerPointなどの成果物名・ツール名・現行手段を絶対に含めないでください。
-outputは現在作っている成果物です。purposeとoutputを混同しないでください。
-4問目からoutputRequirementを次のように決めてください。
-- 定期成果物は不要、重要な変化の通知だけでよい: NOT_REQUIRED
-- 必要なときにだけ確認・生成できればよい: ON_DEMAND
-- 法令、監査、定例会議などで定期成果物が必要: REQUIRED
-- 判断できない、未回答: UNKNOWN
-出力は次の型とキーだけを使ってください。stringと指定した項目を数値やobjectにしないでください。
-{
-  "name": "string",
-  "purpose": "string",
-  "frequency": "string",
-  "duration": "string（例: 45分）",
-  "trigger": "string",
-  "consumer": "string",
-  "tools": ["string"],
-  "inputs": ["string"],
-  "output": "string",
-  "steps": ["string"],
-  "decisionPoints": ["string"],
-  "constraints": ["string"],
-  "outputRequirement": "NOT_REQUIRED | ON_DEMAND | REQUIRED | UNKNOWN",
-  "outputRequirementReason": "string"
-}
-すべての値を具体的にし、配列を空にしないでください。`
+const businessTaskPrompt = `あなたはFlowShiftの業務コンテクスト整理役です。Calendarの観測事実と、ユーザー本人への質問・回答だけからBusinessTaskの要約部分を構造化します。
+各回答のmeaningはユーザーが選択した機械的な意味です。answer本文より優先し、絶対に逆の意味へ変更しないでください。特にSYNC_DISCUSSION_STILL_REQUIRED、rolesのscope、stakeholders、processItemsを弱めたり一般化したりしてはいけません。
+自由回答だけは文意を整理できますが、内容を弱めたり追加したりしないでください。回答にない内容は推測せず、配列は空、文字列は「未確認」、contextStatusはUNKNOWNにしてください。一部だけ分かる場合はPARTIALです。
+purposeは「誰が、何を把握・判断・達成するか」という目的だけにし、成果物名やツール名を含めません。outputは現在の手段・成果物です。
+frequencyとdurationはobservationの観測事実を自然な日本語にします。
+outputRequirementは回答から明示的に判断できる場合だけNOT_REQUIRED、ON_DEMAND、REQUIREDとし、それ以外はUNKNOWNです。共有を非同期化できても別の相談時間が必要という回答は、現在の会議形式が必要という意味ではありません。
+contextStatusは、各情報が回答で確認できたかを項目ごとに示します。質問されていない項目は必ずUNKNOWNです。
+${schemaInstruction(businessTaskDraftSchema)}`
 
-const interviewOptionsPrompt = `あなたは業務ヒアリングの補助者です。予定名と所要時間から、ユーザーがキーボード入力せず選べる回答候補を作ります。
-必ず日本語のjsonだけを返してください。候補は断定ではなく、一般的にあり得る具体例にしてください。
-purpose候補にはレポート、報告書、資料、メール、Excel、PowerPointなどの成果物名・ツール名・現行手段を含めず、「誰が何を把握・判断するか」だけを書いてください。
-outputNeedは成果物を廃止できるか確認する4つの選択肢で、必ず下記の意味を1つずつ含めてください。
-出力は次の型とキーだけを使い、purpose、process、exceptionsには重複しない候補を3つ、outputNeedには4つ入れてください。
-{
-  "purpose": ["誰が何を判断するための業務か"],
-  "process": ["利用ツールと開始から共有までの流れ"],
-  "exceptions": ["人が判断する例外や条件"],
-  "outputNeed": [
-    "重要な変化があるときだけ通知されればよい",
-    "必要なときに確認できればよい",
-    "法令・監査上、定期的な成果物が必要",
-    "定例会議のため、毎回必要"
+const interviewOptionsPrompt = `あなたはFlowShiftのCore Interview設計役です。Calendarは質問を始める索引にすぎず、予定名から業務内容や廃止可否を推測しません。
+質問は必ず3問だけです。phaseはCORE、dimensionはpurpose、decision、outputNeedを1問ずつにします。
+各質問にはキーボード入力を減らす3〜4個の回答候補を付け、候補の意味をmeaningへ機械的に記録します。labelとmeaningを矛盾させてはいけません。
+purposeは成果物・ツールではなく「誰が何を把握・判断・達成するか」、decisionは人が行う重要な判断、outputNeedは現在の会議・成果物・作業が目的達成に必須かを聞きます。
+outputNeedの候補には次を含めてください。
+- 非同期化してよく同期の役割もない: ASYNC_OK
+- 共有は非同期化できるが相談・調整など同期の役割が必要: SYNC_DISCUSSION_STILL_REQUIRED。rolesへ具体的な役割をpresent=trueで入れる
+- 現在形式が制度・運用上必要: CURRENT_FORMAT_REQUIRED
+- 判断できない: UNKNOWN
+phaseは常にCORE、質問idはcore-purposeのような一意な英数字です。
+${schemaInstruction(interviewPlanSchema)}`
+
+const followUpPrompt = `あなたはFlowShiftのAdaptive Interview設計役です。暫定BusinessTaskを確認し、再設計判断を左右するCritical Unknownだけを追加質問にします。
+phaseはFOLLOW_UP、質問数は0〜4問です。確認済みの内容を聞き直さず、制約・例外・業務の隠れた役割・他部署への影響・変更リスクのうち、仮説を変え得るものだけを選んでください。十分ならquestionsを空配列にします。
+contextStatusでconstraints・dependencies・risksがUNKNOWNのものは採用判断を止める最重要事項です。UNKNOWNが残っていれば、その次元の質問を必ず1問以上含めてください。
+すでに回答で確認済み（CONFIRMED）の次元は、回答をさらに深掘りする必要がある場合を除き、再度質問しないでください。
+各質問には3〜6個の選択肢を付けます。「情報がある／ない」ではなく内容を聞いてください。関係者は具体的な対象をmeaning.stakeholders、現在工程は具体的な行為をmeaning.processItemsへ保存し、複数該当する質問はselectionをMULTIPLEにします。役割はmeaning.rolesへ具体名、present、scope（ALL | PARTIAL | CONDITIONAL | UNKNOWN）、必要ならscopeDetailを保存します。「まだ分からない」はcontextStateをUNKNOWNにします。
+存在だけ分かって具体的な対象が分からない場合、その項目をCONFIRMEDにしないでください。
+リスク（dimension=risks）の選択肢には、誤りの影響の大きさをmeaning.failureCost（HIGH / LOW）で付けてください。他の次元にはfailureCostを付けません。
+phaseは常にFOLLOW_UP、質問idはfollowup-trainingのような一意な英数字です。
+${schemaInstruction(interviewPlanSchema)}`
+
+// 業務ごとに確認済みの事実（役割・共有形態）を明示的な指示としてプロンプトへ補間する。
+// 以前はLLM出力を後からregexで書き換えていたが、指示として渡す方が一貫した出力になる。
+function designPromptFor(task: BusinessTask): string {
+  const roleLabels = task.businessRoleDetails.filter((role) => role.present).map((role) => role.scope === 'ALL' ? role.name : `${role.name}（${role.scopeDetail ?? '条件付き'}）`)
+  const dynamicRules = [
+    ...(roleLabels.length ? [
+      `- 回答で確認済みの役割（${roleLabels.join('・')}）は範囲を変えずに残す。workflowに人の工程として含め、roles.humanにも入れ、hypothesisで維持することを明記する。unknownsやcriticalUnknownsには入れず、factsに確認済みとして含める。`,
+    ] : []),
+    ...(task.deliveryModel.synchronousRole === 'SEPARATE_REQUIRED' ? [
+      '- 共有は非同期化しつつ、相談・調整の同期時間は別途維持する構成にする。headlineとmetricsのafter側（scheduledOutputAfter・routineHumanWorkAfter・outputAfter）へその構成を反映する。',
+    ] : []),
+    ...(task.deliveryModel.currentFormat === 'REQUIRED' ? [
+      '- 現在の形式を維持する前提で、metricsのafter側も現在の役割の維持を反映する。',
+    ] : []),
+    ...(task.failureCost === 'HIGH' ? [
+      '- 誤りの影響が大きいと回答済み。AI単独実行（AI_DELEGATE）を提案せず、人の確認を挟む構成にする。',
+    ] : []),
   ]
-}`
+  return `あなたはFlowShiftの業務再設計パートナーです。目的は改善案を断定することではなく、ユーザーが確認したBusinessTaskから別の設計可能性と検証方法を提示することです。
+次の原則を厳守してください。
+- AIは最終判断者ではない。Calendar情報だけで廃止・自動化を断定しない。
+- businessTask.answerEvidenceの原文とmeaningはユーザー回答の正本であり、別の意味へ解釈し直さない。businessRolesにある役割を「未確認」と書かない。
+- factsは観測事実と回答済み事項だけ。成立条件はassumptions、判断前の不足情報はunknownsへ分ける。
+- readiness（採用判断できるか）とredesign（案の具体性）は別物。constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXTにするが、redesignはreadinessに関わらず最も価値のある具体案を描く。未確認を理由にKEEPへ逃げない。
+- strategyは次の梯子を上から順に問い、最初に成立した段を選ぶ。AI（⑤⑥）から検討を始めない。①ELIMINATE：そもそもこの業務・成果物を不要にできるか ②SIMPLIFY：頻度・手順・承認・転記を減らせるか ③ON_DEMAND：定期実行を必要時だけにできるか ④AUTOMATE：条件を明文化できる処理をルール・API連携で自動化できるか ⑤AI_ASSIST：曖昧・非構造の処理をAIが下書きし人が確認する形にできるか ⑥AI_DELEGATE：高頻度で誤りをすぐ検知でき影響が小さい処理をAI単独実行にできるか ⑦KEEP：どれも成立しない。
+- 検討した各段をredesign.ladderへ採用段まで記録する。verdictはADOPTED（採用）・REJECTED（成立しない）・DEFERRED（未確認情報のせいで判断できない）で、reasonは1行。DEFERREDにした理由はcriticalUnknownsまたはvalidationPlanの項目と対応させる。
+- conclusionは3文以内。NEEDS_CONTEXTでは「何が確認できれば採用判断できるか」を示し、案が無いかのような書き方をしない。
+- headlineは変更案を手段込みの1文（全角60字以内目安）で書く。例：「Kintone APIでの自動抽出とスプレッドシートへの自動反映に置き換える」。workflowとmetricsのafter側はheadlineの案と一致させる。「現状維持」と書くのはstrategyがKEEPのときだけ。
+- hypothesisは「〜が確認できれば、〜へ変更できる」という条件付きの前向き表現にし、全角200字以内に収める。
+- assumptionsとunknownsは仮説の成否に関わるものだけを各5件以内。unknownsにvalidationPlan.itemsの言い換えを繰り返さない。
+- 「この作業をAIで速くする」より「そもそもこの作業・成果物は必要か」を先に検討する。ただし不要と確認されていないものを消さない。
+- systemは決定論的な取得・通知、aiは意味整理・候補提示、人は確認・判断を担当する。
+- roles.humanの各項目は「最終確認」のような抽象語で終わらせず、何を・どの観点で確認するかまで書く（人がAIの誤りを実際に見つけられる設計にする）。
+- workflowにaiまたはsystemの工程がある場合、validationPlanに「人がAI・システムの誤りにどう気づくか」を確かめる項目を必ず1件含める。
+- 時間は入力頻度を変換せず、根拠のない年間換算や精密値を作らない。
+- metricsは意味のある比較だけを書く。この業務で変化しない・該当しない行はbefore/afterともキーごと省略する。
+- validationPlanは固定期間にせず、案に応じてPILOT、TECHNICAL_FEASIBILITY、OFFLINE_EVALUATION、REQUIREMENT_VALIDATION、STAKEHOLDER_REVIEWから必要な方法だけを選ぶ。
+${dynamicRules.join('\n')}
+${schemaInstruction(designOutputSchema)}`
+}
 
-const designPrompt = `あなたはBusiness Process Redesignの専門家です。仕事をAIに置き換えるのではなく、AI前提で仕事を作り直します。ユーザーが承認したBusinessTaskを変更せず、purpose（達成したい結果）とoutput（現在の手段）を明確に分離して設計してください。
+export async function extractBusinessTask(apiKey: string, input: InterviewRequest): Promise<DeepSeekResult<BusinessTask>> {
+  // ユーザーの語彙に含まれる成果物名（メール対応等）は目的文でも許可する（design-schema参照）
+  const contextText = [input.observation.title, ...input.answers.map((answer) => answer.answer)].join('\n')
+  const result = await generateJson<BusinessTaskDraft>(apiKey, businessTaskPrompt, input, businessTaskDraftSchemaFor(contextText))
+  return { ...result, value: finalizeBusinessTask(input.observation, input.answers, result.value) }
+}
 
-最初に、現行成果物を廃止できるかをoutputRequirementで判断します。
-- NOT_REQUIRED: strategyはELIMINATE。定期レポート作成、毎回のレビュー・承認、定期メール配信を新工程へ絶対に含めない。通常時の人の定期作業は0分。データを継続監視し、重要な変化を検知し、原因候補と影響を整理し、必要なときだけ通知し、人が原因確認と施策判断を行う。必要時の説明は通知に含める。
-- ON_DEMAND: strategyはON_DEMANDまたはELIMINATE。定期成果物と定期確認をなくし、必要時だけ確認・生成する。通常時の人の定期作業は0分。
-- REQUIRED: strategyはAUTOMATEまたはKEEP。法令・監査・会議上の要件を守りながら工程を減らす。
-- UNKNOWN: strategyはAUTOMATEまたはKEEP。廃止を断定せず、成果物の必要性をunknownsへ入れる。
+// プロフィール（職種・役職・勤務形態）が設定されていれば、プロンプト先頭に文脈として補間する
+function withProfile(prompt: string, profile: UserProfile | undefined): string {
+  const line = profileSummaryLine(profile)
+  return line ? `${line}\n${prompt}` : prompt
+}
 
-conventionalは、現在の成果物を維持して自動化する従来案との比較用です。conventionalの工程をredesignへ流用しないでください。
-時間削減は補助指標です。頻度を勝手に週次・月次へ変換せず、年間削減時間を算出しないでください。数値効果は推定レンジとし、根拠のない精密な値を作らないでください。
-必ず日本語のjsonだけを返してください。トップレベルはanalysisとredesignです。
-{
-  "analysis": {
-    "conclusion": "目的と成果物の必要性を踏まえた短い結論",
-    "purposeCheck": {
-      "outcome": "本来達成したい結果",
-      "currentMeans": "現在の手段・成果物",
-      "outputDecision": "成果物を廃止・必要時化・維持する判断と理由"
-    },
-    "problems": [{"value":"string","label":"string","detail":"string"}],
-    "ratings": {"opportunity":"HIGH | MEDIUM | LOW","implementation":"HIGH | MEDIUM | LOW","aiFit":"HIGH | MEDIUM | LOW"},
-    "ratingReasons": ["string"],
-    "facts": ["string"],
-    "assumptions": ["string"],
-    "unknowns": ["string"],
-    "conventional": {"summary":"string","steps":["string"]}
-  },
-  "redesign": {
-    "strategy": "ELIMINATE | ON_DEMAND | AUTOMATE | KEEP",
-    "headline": "編集された短い提案名",
-    "insight": "何を作る仕事から、何を判断する仕事へ変えるか",
-    "workflow": [{"label":"string","detail":"string","kind":"human | system | ai | decision | output"}],
-    "roles": {"system":["string"],"ai":["string"],"human":["string"]},
-    "metrics": {
-      "scheduledOutputBefore":"現在の定期成果物回数・頻度",
-      "scheduledOutputAfter":"見直し後の定期成果物回数・頻度",
-      "routineHumanWorkBefore":"現在の人の定期作業",
-      "routineHumanWorkAfter":"見直し後の人の定期作業",
-      "detectionBefore":"現在の変化検知タイミング",
-      "detectionAfter":"見直し後の変化検知タイミング",
-      "outputBefore":"現在の成果物",
-      "outputAfter":"見直し後の成果物"
-    },
-    "impact": {
-      "routineMinutesPerCycle": 0,
-      "exceptionMinutesMin": 5,
-      "exceptionMinutesMax": 10,
-      "confidence":"HIGH | MEDIUM | LOW",
-      "assumption":"推定の前提"
-    }
+// 共有カレンダー（他人の業務）の分析では、回答が本人でなく閲覧者の理解であることを毎回伝える。
+// observationのsourceCalendarNameの有無が閲覧者モードの判定
+function withObserverNote(prompt: string, sourceCalendarName: string | undefined): string {
+  if (!sourceCalendarName) return prompt
+  return `この業務は「${sourceCalendarName}」のカレンダーを、閲覧者（上司・同僚）が本人に代わって分析しています。回答は本人ではなく閲覧者の理解として扱い、断定を避けて推測はassumptions側へ寄せてください。質問を作る場合は「分かる範囲で」答えられる形にしてください。validationPlanを作る場合は、仮説を本人へ確認する項目（STAKEHOLDER_REVIEWなど）を必ず1件含めてください。\n${prompt}`
+}
+
+const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カレンダーの予定タイトルだけを手がかりに、各タイトルを次の7分類のいずれか1つへ割り当てます。ユーザー情報があれば、その職種で一般的な業務を優先して解釈し、所定労働時間外や休みの日らしい予定は休憩・私用の可能性を考慮してください。
+- 会議: 定例・打ち合わせ・1on1・面談など、人が同期的に集まる予定
+- 資料作成: レポート・提案書・ドキュメントなどの作成
+- データ処理: 入力・登録・更新・転記・集計などの事務処理
+- 顧客対応: 商談・問い合わせ対応・顧客フォロー
+- 開発・制作: 実装・設計・コーディング・テスト・レビュー・デザインなどの制作作業
+- 休憩・私用: 昼食・休憩・移動・通院・休暇など業務でない予定
+- その他: 上記のどれとも判断できないもの
+タイトル以外の情報はありません。推測しすぎず、迷ったら「その他」にしてください。
+入力のtitles配列の各要素について、titleを一字一句そのまま返し、categoryを割り当ててください。
+${schemaInstruction(workClassificationResponseSchema)}`
+
+export async function classifyWork(apiKey: string, titles: string[], profile?: UserProfile): Promise<DeepSeekResult<z.infer<typeof workClassificationResponseSchema>>> {
+  return generateJson(apiKey, withProfile(classifyWorkPrompt, profile), { titles }, workClassificationResponseSchema, 4000)
+}
+
+export async function createInterviewOptions(apiKey: string, input: { observation: WorkObservation; profile?: UserProfile }): Promise<DeepSeekResult<InterviewPlan>> {
+  return generateJson(apiKey, withObserverNote(withProfile(interviewOptionsPrompt, input.profile), input.observation.sourceCalendarName), { observation: input.observation }, interviewPlanSchema, 2600)
+}
+
+export async function createFollowUpQuestions(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<InterviewPlan>> {
+  // 4問×最大6選択肢のmeaningを含むと2200トークンでは途中で切れて
+  // invalid_jsonになることがあるため、余裕を持たせる
+  return generateJson(apiKey, withObserverNote(followUpPrompt, businessTask.observed.sourceCalendarName), { provisionalBusinessTask: businessTask }, interviewPlanSchema, 3600)
+}
+
+// 回答忠実性の不変条件だけを決定論で保証する：
+// ①確認済みの役割は人の担当に含まれ、hypothesis本文またはroleNoteに明記され、unknownsに落ちないこと
+// ②「必要」と確認された成果物・形式を廃止しないこと。
+// 見出しやmetricsの機械的な上書きは行わない（表現はプロンプト側の責務）。
+// roleNoteは別フィールド：以前はhypothesis本文へ連結していたが、200字制限で本文が切れて文が壊れていた。
+function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput): DesignOutput {
+  const requiredRoles = businessTask.businessRoles
+  const roleLabels = businessTask.businessRoleDetails.filter((role) => role.present).map((role) => role.scope === 'ALL' ? role.name : `${role.name}（${role.scopeDetail ?? '条件付き'}）`)
+  const roleKeywords = requiredRoles.flatMap((role) => [role, ...(['相談', '新人教育', '関係づくり', '他部署調整'] as const).filter((keyword) => role.includes(keyword))])
+  const roleIsMentioned = (value: string) => roleKeywords.some((keyword) => value.includes(keyword))
+  const unknowns = design.analysis.unknowns.filter((item) => !roleIsMentioned(item))
+  const criticalUnknowns = design.analysis.criticalUnknowns.filter((item) => !roleIsMentioned(item.question))
+  const roleNote = roleLabels.length && !roleIsMentioned(design.redesign.hypothesis)
+    ? `確認済みの役割（${roleLabels.join('・')}）は、その範囲を変えずに残します。`
+    : undefined
+
+  // 決定論の強制がstrategyを変えるとき、検討の梯子（ladder）のトレースも整合させる。
+  // 旧ADOPTED段はREJECTED（強制理由つき）へ、強制した段はADOPTEDへ書き換える
+  const reconcileLadder = (forced: DesignOutput['redesign']['strategy'], reason: string): NonNullable<DesignOutput['redesign']['ladder']> => {
+    const steps = (design.redesign.ladder ?? []).map((step) => step.verdict === 'ADOPTED' && step.rung !== forced
+      ? { ...step, verdict: 'REJECTED' as const, reason }
+      : step)
+    return steps.some((step) => step.rung === forced)
+      ? steps.map((step) => step.rung === forced ? { ...step, verdict: 'ADOPTED' as const, reason } : step)
+      : [...steps, { rung: forced, verdict: 'ADOPTED' as const, reason }].slice(0, 7)
   }
-}
-problemsは3〜5件、workflowは3〜7工程です。factsには入力に明記された事実だけを含め、実現可否が未確認の内容はassumptionsまたはunknownsへ分離してください。`
+  const forceKeep = businessTask.outputRequirement === 'REQUIRED' && design.redesign.strategy !== 'KEEP'
 
-export async function extractBusinessTask(apiKey: string, input: unknown): Promise<DeepSeekResult<BusinessTask>> {
-  return generateJson(apiKey, businessTaskPrompt, input, businessTaskSchema)
+  // roleNoteは「確認済み役割の維持」専用の定型欄。LLMが自由記述で埋めてきても、ここで常に上書き・削除する
+  const redesign = {
+    ...design.redesign,
+    ...(forceKeep ? { strategy: 'KEEP' as const, ladder: reconcileLadder('KEEP', '成果物・形式が必要と確認済みのため、現在の形を維持します') } : {}),
+    roles: { ...design.redesign.roles, human: [...new Set([...design.redesign.roles.human, ...requiredRoles])] },
+  }
+  if (roleNote) redesign.roleNote = roleNote
+  else delete redesign.roleNote
+
+  return designOutputSchemaFor(businessTask).parse({
+    ...design,
+    analysis: { ...design.analysis, unknowns, criticalUnknowns },
+    redesign,
+  })
 }
 
-export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewOptions>> {
-  return generateJson(apiKey, interviewOptionsPrompt, input, interviewOptionsSchema, 1200)
-}
-
-export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<DesignOutput>> {
-  return generateJson(apiKey, designPrompt, { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
+export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask, profile?: UserProfile): Promise<DeepSeekResult<DesignOutput>> {
+  const result = await generateJson(apiKey, withObserverNote(withProfile(designPromptFor(businessTask), profile), businessTask.observed.sourceCalendarName), { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
+  return { ...result, value: finalizeBusinessDesign(businessTask, result.value) }
 }
 
 export const deepSeekModel = MODEL

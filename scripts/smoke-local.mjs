@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 
 const baseUrl = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:5173'
+const observation = {
+  title: '朝会',
+  occurrences: 20,
+  totalMinutes: 300,
+  averageMinutes: 15,
+  firstOccurredAt: '2026-07-13T00:00:00.000Z',
+  lastOccurredAt: '2026-08-07T00:00:00.000Z',
+  recurring: true,
+}
+
 const healthResponse = await fetch(`${baseUrl}/api/health`)
 assert.equal(healthResponse.status, 200, 'Local Worker health check failed')
 const health = await healthResponse.json()
@@ -15,44 +25,106 @@ assert.equal(calendarStatus.connected, false)
 const calendarEventsResponse = await fetch(`${baseUrl}/api/calendar/events`)
 assert.ok([401, 503].includes(calendarEventsResponse.status), `Unauthenticated calendar request returned ${calendarEventsResponse.status}`)
 
+const calendarListResponse = await fetch(`${baseUrl}/api/calendar/list`)
+assert.ok([401, 503].includes(calendarListResponse.status), `Unauthenticated calendar list request returned ${calendarListResponse.status}`)
+
 const disconnectResponse = await fetch(`${baseUrl}/api/google/disconnect`, { method: 'POST' })
 assert.equal(disconnectResponse.status, 403, 'Calendar disconnect must reject a missing Origin header')
+
+// プロフィール：ローカルはセッション無しでGETがnull、PUTはOrigin検査で拒否される
+const profileResponse = await fetch(`${baseUrl}/api/profile`)
+assert.equal(profileResponse.status, 200)
+const putProfileResponse = await fetch(`${baseUrl}/api/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobType: '営業' }) })
+assert.equal(putProfileResponse.status, 403, 'Profile update must reject a missing Origin header')
+
+if (process.argv.includes('--skip-ai')) {
+  console.log('Local HTTP, Calendar auth boundary, and origin checks passed')
+  process.exit(0)
+}
+
+const classifyResponse = await fetch(`${baseUrl}/api/classify-work`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ titles: ['昼休憩', '売上レポート作成', 'API連携モジュール実装'] }),
+})
+const classifyResult = await classifyResponse.json()
+assert.equal(classifyResponse.status, 200, `Work classification failed: ${JSON.stringify(classifyResult)}`)
+assert.ok(Array.isArray(classifyResult.categories) && classifyResult.categories.length >= 1)
+const validCategories = new Set(['会議', '資料作成', 'データ処理', '顧客対応', '開発・制作', '休憩・私用', 'その他'])
+for (const item of classifyResult.categories) {
+  assert.ok(validCategories.has(item.category), `unexpected category: ${item.category}`)
+}
 
 const optionsResponse = await fetch(`${baseUrl}/api/interview-options`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ eventTitle: '売上レポート作成', eventDurationMinutes: 45 }),
+  body: JSON.stringify({ observation }),
 })
 const optionsResult = await optionsResponse.json()
-assert.equal(optionsResponse.status, 200, `Interview options generation failed: ${JSON.stringify(optionsResult)}`)
-assert.equal(optionsResult.options?.purpose?.length, 3)
-assert.equal(optionsResult.options?.process?.length, 3)
-assert.equal(optionsResult.options?.exceptions?.length, 3)
-assert.equal(optionsResult.options?.outputNeed?.length, 4)
-assert.ok(optionsResult.options.purpose.every((item) => !/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(item)))
+assert.equal(optionsResponse.status, 200, `Interview plan generation failed: ${JSON.stringify(optionsResult)}`)
+assert.equal(optionsResult.options?.phase, 'CORE')
+assert.equal(optionsResult.options?.questions?.length, 3)
+for (const required of ['purpose', 'decision', 'outputNeed']) {
+  assert.ok(optionsResult.options.questions.some((question) => question.dimension === required), `${required} question is required`)
+}
+
+const purposeQuestion = optionsResult.options.questions.find((question) => question.dimension === 'purpose')
+const decisionQuestion = optionsResult.options.questions.find((question) => question.dimension === 'decision')
+const outputQuestion = optionsResult.options.questions.find((question) => question.dimension === 'outputNeed')
+const consultationOption = outputQuestion.options.find((option) => option.meaning.outputNeed === 'SYNC_DISCUSSION_STILL_REQUIRED')
+assert.ok(consultationOption, 'A synchronous consultation option is required')
+assert.ok(consultationOption.meaning.roles.some((role) => role.present), 'The consultation role must be machine-readable')
+
+function selectedAnswer(question, option) {
+  return {
+    questionId: question.id,
+    dimension: question.dimension,
+    question: question.prompt,
+    answer: option.label,
+    source: 'OPTION',
+    optionId: option.id,
+    meaning: option.meaning,
+  }
+}
+
+const answers = [
+  selectedAnswer(purposeQuestion, purposeQuestion.options[0]),
+  selectedAnswer(decisionQuestion, decisionQuestion.options[0]),
+  selectedAnswer(outputQuestion, consultationOption),
+]
 
 const response = await fetch(`${baseUrl}/api/business-task`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    eventTitle: '売上レポート作成',
-    eventDurationMinutes: 45,
-    answers: [
-      { question: 'この業務は、誰が何を判断するために行っていますか？', answer: '上司が週ごとの売上変化を確認し、問題があれば営業施策を判断するためです。' },
-      { question: '実際には、どのツールを使って何をしていますか？', answer: 'SalesforceからCSVを取得し、Excelで集計してPowerPointへ貼り、Teamsで共有します。' },
-      { question: 'いつ人の判断が必要になりますか？', answer: '前週比が大きく変わったときだけ、原因を確認してコメントします。' },
-      { question: '現在の成果物は本当に必要ですか？', answer: '重要な変化があるときだけ通知されればよいです。' },
-    ],
+    observation,
+    answers,
   }),
 })
 
 const result = await response.json()
 assert.equal(response.status, 200, `BusinessTask generation failed: ${JSON.stringify(result)}`)
-assert.equal(typeof result.businessTask?.duration, 'string')
-assert.ok(Array.isArray(result.businessTask?.decisionPoints))
-assert.ok(result.businessTask.decisionPoints.every((item) => typeof item === 'string'))
-assert.equal(result.businessTask.outputRequirement, 'NOT_REQUIRED')
+assert.deepEqual(result.businessTask?.observed, observation)
+assert.equal(result.businessTask?.contextStatus?.constraints, 'UNKNOWN')
+assert.equal(result.businessTask?.contextStatus?.dependencies, 'UNKNOWN')
+assert.equal(result.businessTask?.contextStatus?.risks, 'UNKNOWN')
+assert.equal(result.businessTask?.outputRequirement, 'UNKNOWN')
+assert.equal(result.businessTask?.deliveryModel?.sharingMode, 'ASYNC_POSSIBLE')
+assert.equal(result.businessTask?.deliveryModel?.synchronousRole, 'SEPARATE_REQUIRED')
+assert.equal(result.businessTask?.deliveryModel?.currentFormat, 'UNKNOWN')
+assert.ok(result.businessTask?.businessRoles?.includes(consultationOption.meaning.roles.find((role) => role.present).name))
+assert.equal(result.businessTask?.answerEvidence?.[2]?.answer, consultationOption.label)
 assert.ok(!/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(result.businessTask.purpose))
+
+const followUpResponse = await fetch(`${baseUrl}/api/follow-up-questions`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ businessTask: result.businessTask }),
+})
+const followUpResult = await followUpResponse.json()
+assert.equal(followUpResponse.status, 200, `Follow-up generation failed: ${JSON.stringify(followUpResult)}`)
+assert.equal(followUpResult.plan?.phase, 'FOLLOW_UP')
+assert.ok(followUpResult.plan.questions.length <= 4)
 
 const designResponse = await fetch(`${baseUrl}/api/design`, {
   method: 'POST',
@@ -61,9 +133,25 @@ const designResponse = await fetch(`${baseUrl}/api/design`, {
 })
 const designResult = await designResponse.json()
 assert.equal(designResponse.status, 200, `Business redesign generation failed: ${JSON.stringify(designResult)}`)
-assert.equal(designResult.design?.redesign?.strategy, 'ELIMINATE')
-assert.equal(designResult.design?.redesign?.impact?.routineMinutesPerCycle, 0)
-assert.match(designResult.design?.redesign?.metrics?.scheduledOutputAfter ?? '', /(0|なし|廃止|不要|作らない)/)
-const redesignedWorkflow = designResult.design.redesign.workflow.map((step) => `${step.label} ${step.detail}`).join('\n')
-assert.ok(!/(?:定期|毎回|毎週|毎月).{0,16}(?:レポート|報告書|資料|メール|レビュー|承認)|(?:レポート|報告書|資料).{0,16}(?:作成|生成|配信|送信|共有|レビュー|承認)|(?:定期メール|メール配信|毎回レビュー|毎回承認)/.test(redesignedWorkflow))
-console.log('Local DeepSeek interview, BusinessTask, and redesign smoke tests passed.')
+assert.equal(designResult.design?.analysis?.readiness, 'NEEDS_CONTEXT')
+// 判断保留でも具体案は描く（KEEPへ逃げない）。ELIMINATEだけはsuperRefineが禁じている
+const strategy = designResult.design?.redesign?.strategy
+assert.ok(['SIMPLIFY', 'ON_DEMAND', 'AUTOMATE', 'AI_ASSIST', 'AI_DELEGATE', 'KEEP'].includes(strategy), `unexpected strategy: ${strategy}`)
+// 検討の梯子のトレースが必須で、選んだ段がADOPTEDで含まれる
+const ladder = designResult.design?.redesign?.ladder
+assert.ok(Array.isArray(ladder) && ladder.length >= 1, 'ladder trace is required')
+assert.ok(ladder.some((step) => step.verdict === 'ADOPTED' && step.rung === strategy), 'ladder must adopt the chosen strategy')
+const confirmedRoleName = consultationOption.meaning.roles.find((role) => role.present).name
+const roleRegex = new RegExp(confirmedRoleName)
+assert.ok(
+  roleRegex.test(designResult.design?.redesign?.hypothesis ?? '') || roleRegex.test(designResult.design?.redesign?.roleNote ?? ''),
+  'confirmed role must be stated in hypothesis or roleNote',
+)
+// 確認済みの役割がunknownsへ落ちないこと（finalizeBusinessDesignの決定論フィルタは役割名で除外する。
+// 固定語「相談」での検査はLLMの役割命名に依存して不安定だったため、実際の不変条件に合わせる）
+assert.ok(!designResult.design?.analysis?.unknowns?.some((item) => item.includes(confirmedRoleName)), 'confirmed role must not appear in unknowns')
+assert.equal(typeof designResult.design?.redesign?.hypothesis, 'string')
+assert.ok(designResult.design?.analysis?.unknowns?.length > 0)
+assert.ok(designResult.design?.validationPlan?.items?.length > 0)
+
+console.log('Local interview, context model, conditional hypothesis, and validation smoke tests passed.')

@@ -1,825 +1,664 @@
-import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, LoaderCircle, RefreshCcw } from 'lucide-react'
-import { demoDesign, demoEvents, initialBusinessTask, interviewQuestions } from './demo-data'
-import { disconnectGoogleCalendar, extractBusinessTask, generateBusinessDesign, generateInterviewOptions, getGoogleCalendarEvents, getGoogleCalendarStatus } from './api'
-import type { BusinessDesign, BusinessTask, CalendarEvent, CalendarStatus, DemoEvent, InterviewOptions, OutputRequirement, Rating as RatingValue, Screen, WorkflowStep } from './types'
-import WorkflowDiagram from './WorkflowDiagram'
+import { useEffect, useRef, useState } from 'react'
+import { bridgeQuestionsFor, fallbackCorePlan, QUESTION_BUDGET } from '../shared/context-questions'
+import { createDeterministicTask } from '../shared/interview'
+import { projectContext, projectName } from '../shared/project-schema'
+import { applyCategories, calendarKeyOfGroupId, groupCalendarEvents, mergeWorkGroups, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
+import type { CalendarEntry } from '../shared/calendar-schema'
+import type { UserProfile } from '../shared/profile-schema'
+import {
+  ApiError,
+  classifyWork,
+  createImprovementProject,
+  deleteImprovementProject,
+  disconnectGoogleCalendar,
+  extractBusinessTask,
+  extractBusinessTaskFromObservation,
+  generateBusinessDesign,
+  generateFollowUpPlan,
+  generateInterviewPlan,
+  getCalendarList,
+  getGoogleCalendarEvents,
+  getGoogleCalendarStatus,
+  getImprovementProjects,
+  getProfile,
+  saveProfile,
+  updateImprovementProject,
+  updateImprovementProjectContext,
+  updateImprovementProjectStatus,
+} from './api'
+import AppHeader from './components/AppHeader'
+import { mergeCategoryCache, readCategoryCache } from './lib/categories'
+import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
+import { listMutedWork, markProfilePrompted, muteWork, profilePrompted, unmuteWork } from './lib/preferences'
+import { addManualWork, listManualWork, removeManualWork } from './lib/manual-work'
+import AddWorkDialog from './components/AddWorkDialog'
+import ProfileDialog from './components/ProfileDialog'
+import ConnectScreen from './screens/ConnectScreen'
+import WorkspaceScreen from './screens/WorkspaceScreen'
+import SessionScreen from './screens/SessionScreen'
+import HypothesisScreen from './screens/HypothesisScreen'
+import NoteScreen from './screens/NoteScreen'
+import type {
+  BusinessDesign,
+  BusinessTask,
+  CalendarStatus,
+  ImprovementProject,
+  InterviewAnswer,
+  InterviewPlan,
+  InterviewQuestion,
+  ProjectStatus,
+  Screen,
+  SessionDraft,
+  WorkGroup,
+} from './types'
 
-const toolSteps: { screens: Screen[]; label: string }[] = [
-  { screens: ['discovery'], label: '業務を選ぶ' },
-  { screens: ['interview', 'review'], label: '内容確認' },
-  { screens: ['analysis'], label: '分析' },
-  { screens: ['redesign'], label: '提案' },
-]
-
-const backScreen: Partial<Record<Screen, Screen>> = {
-  discovery: 'home',
-  interview: 'discovery',
-  review: 'interview',
-  analysis: 'review',
-  redesign: 'analysis',
-}
-
-type RequestStatus = 'idle' | 'loading' | 'error'
-type WorkFilter = 'all' | 'repeat' | 'long'
 type CalendarState = CalendarStatus & { loading: boolean }
+type CalendarRange = { timeMin: string; timeMax: string } | null
 
-function Logo() {
-  return <span className="wordmark">FlowShift</span>
+// 発見→理解→仮説の1セッション分の作業状態。ばらばらのuseStateではなく
+// 1オブジェクトで持ち、開始・破棄を原子的に行う。
+type SessionFlow = {
+  group: WorkGroup | null
+  plan: InterviewPlan | null
+  planSource: 'ai' | 'generic' | null
+  answers: InterviewAnswer[]
+  task: BusinessTask | null
+  refinedTask: BusinessTask | null
+  pendingQuestions: InterviewQuestion[]
+  askedQuestions: InterviewQuestion[]
+  refining: boolean
+  // 連続インタビューの進行状態：完了で確認画面へ。roundsは追加質問生成の実行回数
+  interviewComplete: boolean
+  followUpRounds: number
+  design: BusinessDesign | null
+  designError: string
 }
 
-function eventCategory(title: string): string {
-  if (/(会議|定例|ミーティング|1on1|面談)/i.test(title)) return '会議'
-  if (/(レポート|報告|資料|提案書)/i.test(title)) return '資料作成'
-  if (/(入力|登録|更新|転記|集計)/i.test(title)) return 'データ処理'
-  if (/(顧客|問い合わせ|商談)/i.test(title)) return '顧客対応'
-  return '業務'
+const emptyFlow: SessionFlow = {
+  group: null, plan: null, planSource: null, answers: [], task: null, refinedTask: null,
+  pendingQuestions: [], askedQuestions: [], refining: false, interviewComplete: false, followUpRounds: 0, design: null, designError: '',
 }
 
-function calendarEventsToWorkItems(events: CalendarEvent[]): DemoEvent[] {
-  return events.map((event, index) => {
-    const start = new Date(event.start)
-    const category = eventCategory(event.title)
-    const taskLike = category !== '会議' && category !== '業務'
-    const candidate = event.recurring || taskLike
-    const reason = [
-      event.recurring ? '繰り返し予定' : '',
-      event.durationMinutes >= 30 ? `${event.durationMinutes}分` : '',
-      taskLike ? `${category}を含む業務` : '',
-    ].filter(Boolean).join('・')
-    return {
-      id: event.id,
-      day: new Intl.DateTimeFormat('ja-JP', { weekday: 'short' }).format(start).replace('曜日', ''),
-      date: `${start.getMonth() + 1}/${start.getDate()}`,
-      time: event.allDay ? '終日' : new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false }).format(start),
-      duration: event.durationMinutes,
-      title: event.title,
-      category,
-      recurring: event.recurring,
-      allDay: event.allDay,
-      start: event.start,
-      end: event.end,
-      source: 'google' as const,
-      ...(candidate ? { candidate: { rank: index + 1, level: event.recurring && event.durationMinutes >= 30 ? 'HIGH' as const : 'MEDIUM' as const, reason } } : {}),
-    }
-  })
+// 追加質問の生成ラウンド上限。QUESTION_BUDGET（合計9問）はshared/context-questions.tsに定義
+const MAX_FOLLOWUP_ROUNDS = 2
+
+// handleAnswerは同じquestionIdを上書きするためanswersはquestionIdユニーク
+function criticalUnknownRemains(task: BusinessTask | null): boolean {
+  return !task || (['constraints', 'dependencies', 'risks'] as const).some((key) => task.contextStatus[key] === 'UNKNOWN')
 }
 
-function eventReasons(event: DemoEvent): string[] {
-  const reasons = [
-    event.recurring ? '繰り返し予定として登録されています' : '',
-    event.duration >= 30 ? `1回${event.duration}分かかります` : '',
-    event.category !== '会議' && event.category !== '業務' ? `${event.category}を含む業務です` : '',
-  ].filter(Boolean)
-  return reasons.length ? reasons : ['選択した予定の目的と工程を確認できます']
+function mergeQuestions(current: InterviewQuestion[], added: InterviewQuestion[]): InterviewQuestion[] {
+  const known = new Set(current.map((question) => question.id))
+  return [...current, ...added.filter((question) => !known.has(question.id))]
 }
 
-function eventPeriod(events: DemoEvent[]): string {
-  const dates = events.flatMap((event) => event.start ? [new Date(event.start)] : [])
-  if (!dates.length) return '8月3日〜7日'
-  const sorted = dates.sort((left, right) => left.getTime() - right.getTime())
-  const format = (date: Date) => `${date.getMonth() + 1}月${date.getDate()}日`
-  return `${format(sorted[0])}〜${format(sorted.at(-1) ?? sorted[0])}`
-}
-
-function AppHeader({ screen, onBack, onReset }: { screen: Screen; onBack: () => void; onReset: () => void }) {
-  const activeIndex = toolSteps.findIndex((step) => step.screens.includes(screen))
-
-  return (
-    <header className="app-header">
-      <div className="header-inner">
-        {screen === 'home' ? (
-          <button type="button" onClick={onReset} className="brand-button" aria-label="最初の画面へ戻る"><Logo /></button>
-        ) : (
-          <>
-            <button type="button" className="header-back" onClick={onBack} aria-label="前の画面へ戻る"><ArrowLeft size={22} /></button>
-            <strong className="header-location">{toolSteps[activeIndex]?.label}</strong>
-            <span className="step-count">ステップ {activeIndex + 1} / {toolSteps.length}</span>
-          </>
-        )}
-      </div>
-    </header>
-  )
-}
-
-function ToolTitle({ title, summary }: { title: string; summary?: string }) {
-  return (
-    <div className="tool-titlebar">
-      <h1>{title}</h1>
-      {summary && <p>{summary}</p>}
-    </div>
-  )
-}
-
-function HomeScreen({ calendar, busy, error, onConnect, onCalendarStart, onDisconnect, onDemoStart }: {
-  calendar: CalendarState
-  busy: boolean
-  error: string
-  onConnect: () => void
-  onCalendarStart: () => Promise<void>
-  onDisconnect: () => Promise<void>
-  onDemoStart: () => void
-}) {
-  return (
-    <main className="home-grid">
-      <section className="home-intro">
-        <div>
-          <h1 className="hero-title">
-            仕事をAIに置き換えるのではなく、<br />
-            <span>AI前提で仕事を作り直す。</span>
-          </h1>
-          <p className="hero-description">
-            毎週45分のレポート作成を、「重要な変化があるときだけ判断する業務」へ。目的と現在の手段を分け、成果物そのものが必要かどうかから見直します。
-          </p>
-          <div className="home-actions">
-            {calendar.connected ? (
-              <>
-                <button type="button" onClick={() => void onCalendarStart()} className="primary-button" disabled={busy}>
-                  {busy ? <><LoaderCircle className="animate-spin" />予定を取得中</> : <>予定から業務を探す<ArrowRight size={20} /></>}
-                </button>
-                <button type="button" onClick={() => void onDisconnect()} className="secondary-button" disabled={busy}>接続を解除</button>
-              </>
-            ) : (
-              <button type="button" onClick={onConnect} className="primary-button" disabled={calendar.loading || !calendar.configured}>
-                {calendar.loading ? '接続状態を確認中' : 'Google Calendarを接続'}<ArrowRight size={20} />
-              </button>
-            )}
-            <button type="button" onClick={onDemoStart} className="secondary-button">売上レポートの例を見る</button>
-          </div>
-          <p className="calendar-note">
-            {calendar.connected
-              ? `${calendar.email ?? 'Googleアカウント'}と接続済み`
-              : calendar.configured ? '予定の読み取り権限だけを使用します。' : 'Google OAuthのローカル設定が必要です。'}
-          </p>
-          {error && <p className="calendar-error" role="alert">{error}</p>}
-          <ul className="service-notes" aria-label="データの取り扱い">
-            <li>予定はタイトル・開始終了時刻・繰り返し情報だけを取得します</li>
-            <li>選択した予定と回答のみ、分析のため外部AIサービスへ送信します</li>
-            <li>結果は保存しません</li>
-          </ul>
-        </div>
-      </section>
-
-      <section className="hero-example" aria-label="売上レポート改善例">
-        <header className="example-header">
-          <h2>売上レポート作成</h2>
-          <p>毎週月曜日・営業部長向け</p>
-        </header>
-        <div className="example-comparison">
-          <div><span>現在</span><strong>45分</strong><small>毎週6工程</small></div>
-          <ArrowRight aria-hidden="true" />
-          <div className="is-after"><span>見直し後</span><strong>通常0分</strong><small>変化時のみ確認</small></div>
-        </div>
-        <div className="example-detail">
-          <h3>残す仕事</h3>
-          <ol>
-            <li><span>1</span>売上データを継続監視</li>
-            <li><span>2</span>重要な変化と理由だけ通知</li>
-            <li><span>3</span>担当者が原因と対応を判断</li>
-          </ol>
-        </div>
-        <p className="example-note">定期レポートは原則作らず、必要になった時点の通知と説明を成果物にします。</p>
-      </section>
-    </main>
-  )
-}
-
-function DiscoveryScreen({ events, selectedEvent, onSelectEvent, onSelect }: {
-  events: DemoEvent[]
-  selectedEvent: DemoEvent
-  onSelectEvent: (event: DemoEvent) => void
-  onSelect: () => Promise<void>
-}) {
-  const [filter, setFilter] = useState<WorkFilter>('all')
-  const [showMobileDetail, setShowMobileDetail] = useState(false)
-  const [preparing, setPreparing] = useState(false)
-  const candidates = events.filter((event) => event.candidate)
-  const visibleEvents = events.filter((event) => {
-    if (filter === 'repeat') return Boolean(event.recurring)
-    if (filter === 'long') return event.duration >= 30
-    return true
-  })
-
-  async function selectWork() {
-    if (preparing) return
-    setPreparing(true)
-    await onSelect()
-  }
-
-  return (
-    <main className="tool-main">
-      <ToolTitle title="業務を選ぶ" summary={`${candidates.length}件の確認候補`} />
-
-      <div className="work-toolbar" aria-label="表示条件">
-        <strong>{eventPeriod(events)}</strong>
-        <div className="filter-buttons">
-          {([
-            ['all', 'すべて'],
-            ['repeat', '繰り返し'],
-            ['long', '30分以上'],
-          ] as const).map(([value, label]) => (
-            <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className={`work-browser ${showMobileDetail ? 'show-detail' : ''}`}>
-        <section className="work-list" aria-labelledby="work-list-heading">
-          <h2 id="work-list-heading">予定・業務一覧</h2>
-          {visibleEvents.map((event) => (
-            <WorkRow key={event.id} event={event} selected={event.id === selectedEvent.id} onOpen={() => { onSelectEvent(event); setShowMobileDetail(true) }} />
-          ))}
-          {!visibleEvents.length && <p className="empty-work-list">この条件に合う予定はありません。</p>}
-        </section>
-
-        <aside className="selection-pane" aria-labelledby="selected-work-heading">
-          <button type="button" className="mobile-list-back" onClick={() => setShowMobileDetail(false)}><ArrowLeft size={18} />一覧へ戻る</button>
-          <h2 id="selected-work-heading">{selectedEvent.title}</h2>
-          <p className="work-meta">{selectedEvent.recurring ? '繰り返し' : '単発'}・{selectedEvent.allDay ? '終日' : `${selectedEvent.duration}分`}・{selectedEvent.category}</p>
-          <div className="selection-reasons">
-            <h3>確認候補になった理由</h3>
-            <ul>{eventReasons(selectedEvent).map((reason) => <li key={reason}>{reason}</li>)}</ul>
-          </div>
-          <details className="help-details">
-            <summary>候補の選び方</summary>
-            <p>頻度、所要時間、定型作業の有無から、確認する価値が高い業務を表示しています。</p>
-          </details>
-          {(selectedEvent.allDay || selectedEvent.duration > 1440) && <p className="calendar-error">開始・終了時刻が1日以内の予定を選んでください。</p>}
-          <button type="button" className="primary-button full-width" onClick={() => void selectWork()} disabled={preparing || selectedEvent.allDay || selectedEvent.duration > 1440}>
-            {preparing ? <><LoaderCircle className="animate-spin" />回答候補を準備中</> : <>この業務を確認する<ArrowRight size={20} /></>}
-          </button>
-        </aside>
-      </div>
-    </main>
-  )
-}
-
-function WorkRow({ event, selected, onOpen }: { event: DemoEvent; selected: boolean; onOpen: () => void }) {
-  const content = (
-    <>
-      <div className="work-time"><strong>{event.day} {event.time}</strong><span>{event.date}</span></div>
-      <div className="work-name"><h3>{event.title}</h3><p>{event.recurring ? '繰り返し' : '単発'}・{event.allDay ? '終日' : `${event.duration}分`}・{event.category}</p></div>
-      {event.candidate && <span className="candidate-text">確認候補</span>}
-    </>
-  )
-  return <button type="button" className={`work-row${selected ? ' is-selected' : ''}`} onClick={onOpen}>{content}</button>
-}
-
-type InterviewProps = {
-  eventTitle: string
-  answers: string[]
-  setAnswers: (answers: string[]) => void
-  options: InterviewOptions | null
-  onExtract: (answers: string[]) => Promise<void>
-  onDemoFallback: () => void
-}
-
-function InterviewScreen({ eventTitle, answers, setAnswers, options, onExtract, onDemoFallback }: InterviewProps) {
-  const [draft, setDraft] = useState('')
-  const [customMode, setCustomMode] = useState(false)
-  const [status, setStatus] = useState<RequestStatus>('idle')
-  const [errorMessage, setErrorMessage] = useState('')
-  const complete = answers.length === interviewQuestions.length
-  const questionIndex = Math.min(answers.length, interviewQuestions.length - 1)
-  const currentQuestion = interviewQuestions[questionIndex]
-  const currentOptions = options?.[currentQuestion.id] ?? currentQuestion.options
-
-  async function requestExtract(nextAnswers: string[]) {
-    setStatus('loading')
-    setErrorMessage('')
-    try {
-      await onExtract(nextAnswers)
-    } catch (error) {
-      setStatus('error')
-      setErrorMessage(error instanceof Error ? error.message : '回答内容を整理できませんでした。')
-    }
-  }
-
-  async function submitAnswer(event: React.FormEvent) {
-    event.preventDefault()
-    const value = draft.trim()
-    if (!value || complete) return
-    const nextAnswers = [...answers, value]
-    setAnswers(nextAnswers)
-    setDraft('')
-    setCustomMode(false)
-    if (nextAnswers.length === interviewQuestions.length) await requestExtract(nextAnswers)
-  }
-
-  function reviseLastAnswer() {
-    const previousAnswers = answers.slice(0, -1)
-    setDraft(answers.at(-1) ?? '')
-    setCustomMode(true)
-    setAnswers(previousAnswers)
-    setStatus('idle')
-    setErrorMessage('')
-  }
-
-  return (
-    <main className="tool-main narrow-tool">
-      <ToolTitle title={eventTitle} summary={`質問 ${Math.min(answers.length + 1, interviewQuestions.length)} / ${interviewQuestions.length}`} />
-
-      {answers.length > 0 && (
-        <details className="previous-answers">
-          <summary>回答済みの内容（{answers.length}件）</summary>
-          <ol>{answers.map((answer, index) => <li key={interviewQuestions[index].id}><strong>{interviewQuestions[index].prompt}</strong><p>{answer}</p></li>)}</ol>
-        </details>
-      )}
-
-      {status === 'loading' ? (
-        <div className="request-state" aria-live="polite"><LoaderCircle className="animate-spin" /><div><strong>回答内容を整理しています</strong><p>完了すると確認画面へ進みます。</p></div></div>
-      ) : status === 'error' ? (
-        <div className="request-error" role="alert">
-          <strong>回答内容を整理できませんでした</strong>
-          <p>{errorMessage}</p>
-          <div className="button-row">
-            <button type="button" className="primary-button" onClick={() => void requestExtract(answers)}>再試行</button>
-            <button type="button" className="secondary-button" onClick={onDemoFallback}>固定デモで続ける</button>
-            <button type="button" className="text-button" onClick={reviseLastAnswer}>最後の回答を修正</button>
-          </div>
-        </div>
-      ) : complete ? (
-        <div className="question-form">
-          <h2>{interviewQuestions.length}件の回答が完了しています</h2>
-          <p>回答から整理した内容をもう一度確認できます。</p>
-          <div className="button-row">
-            <button type="button" className="primary-button" onClick={() => void requestExtract(answers)}>内容を確認する<ArrowRight size={20} /></button>
-            <button type="button" className="secondary-button" onClick={reviseLastAnswer}>最後の回答を修正</button>
-          </div>
-        </div>
-      ) : (
-        <form className="question-form" onSubmit={submitAnswer}>
-          <h2><span>質問 {answers.length + 1}</span>{currentQuestion.prompt}</h2>
-          <p>{currentQuestion.hint}</p>
-          <p className="option-caption">近いものを1つ選んでください</p>
-          <fieldset className="answer-options">
-            <legend className="sr-only">{currentQuestion.prompt}への回答候補</legend>
-            {currentOptions.map((option) => (
-              <label key={option} className="answer-option">
-                <input type="radio" name={`answer-${currentQuestion.id}`} checked={!customMode && draft === option} onChange={() => { setDraft(option); setCustomMode(false) }} />
-                <span>{option}</span>
-              </label>
-            ))}
-            <label className="answer-option">
-              <input type="radio" name={`answer-${currentQuestion.id}`} checked={customMode} onChange={() => { setDraft(currentOptions.includes(draft) ? '' : draft); setCustomMode(true) }} />
-              <span>その他（自由入力）</span>
-            </label>
-          </fieldset>
-          {customMode && <textarea className="custom-answer" value={draft} onChange={(event) => setDraft(event.target.value)} rows={4} placeholder="当てはまる内容を入力してください" aria-label="その他の回答" autoFocus />}
-          <div className="form-actions only-primary">
-            <button type="submit" className="primary-button" disabled={!draft.trim()}>
-              {answers.length === interviewQuestions.length - 1 ? '内容を整理する' : '次へ'}<ArrowRight size={20} />
-            </button>
-          </div>
-        </form>
-      )}
-    </main>
-  )
-}
-
-function ReviewScreen({ task, setTask, onAnalyze, onDemoFallback }: {
-  task: BusinessTask
-  setTask: (task: BusinessTask) => void
-  onAnalyze: (task: BusinessTask) => Promise<void>
-  onDemoFallback: () => void
-}) {
-  const [editing, setEditing] = useState(false)
-  const [status, setStatus] = useState<RequestStatus>('idle')
-  const [errorMessage, setErrorMessage] = useState('')
-  const purposeIncludesMeans = /(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(task.purpose)
-  const valid = Boolean(task.purpose.trim() && !purposeIncludesMeans && task.frequency.trim() && task.duration.trim() && task.tools.length && task.steps.length && task.decisionPoints.length && task.outputRequirementReason.trim())
-
-  function updateText(field: 'purpose' | 'frequency' | 'duration' | 'output' | 'outputRequirementReason', value: string) {
-    setTask({ ...task, [field]: value })
-  }
-
-  function updateList(field: 'steps' | 'decisionPoints', value: string) {
-    setTask({ ...task, [field]: value.split(/\n+/).map((item) => item.trim()).filter(Boolean) })
-  }
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!valid) return
-    setStatus('loading')
-    setErrorMessage('')
-    try {
-      await onAnalyze(task)
-    } catch (error) {
-      setStatus('error')
-      setErrorMessage(error instanceof Error ? error.message : '分析結果を生成できませんでした。')
-    }
-  }
-
-  return (
-    <main className="tool-main form-tool">
-      <ToolTitle title="内容を確認" summary="回答から以下を整理しました。必要な項目は直接修正できます。" />
-      <form className="review-form" onSubmit={submit}>
-        {editing ? (
-          <div className="review-edit-fields">
-            <EditableField label="目的" help="成果物名やツール名を含めず、達成したい結果を記載" value={task.purpose} onChange={(value) => updateText('purpose', value)} multiline />
-            {purposeIncludesMeans && <p className="form-validation" role="alert">目的からレポート・資料・ツール名を外し、誰が何を把握・判断するかに書き換えてください。</p>}
-            <div className="form-grid">
-              <FrequencyField value={task.frequency} onChange={(value) => updateText('frequency', value)} />
-              <DurationField value={task.duration} onChange={(value) => updateText('duration', value)} />
-            </div>
-            <ToolPicker value={task.tools} onChange={(value) => setTask({ ...task, tools: value })} />
-            <EditableField label="工程" help="1行に1工程" value={task.steps.join('\n')} onChange={(value) => updateList('steps', value)} multiline />
-            <EditableField label="判断が必要な箇所" help="1行に1項目" value={task.decisionPoints.join('\n')} onChange={(value) => updateList('decisionPoints', value)} multiline />
-            <EditableField label="成果物" value={task.output} onChange={(value) => updateText('output', value)} />
-            <OutputRequirementField value={task.outputRequirement} onChange={(value) => setTask({ ...task, outputRequirement: value })} />
-            <EditableField label="判断理由" value={task.outputRequirementReason} onChange={(value) => updateText('outputRequirementReason', value)} multiline />
-          </div>
-        ) : <ReviewSummary task={task} />}
-        {status === 'error' && (
-          <div className="request-error" role="alert"><strong>分析結果を生成できませんでした</strong><p>{errorMessage}</p><button type="button" className="secondary-button" onClick={onDemoFallback}>固定デモの分析で続ける</button></div>
-        )}
-        <div className="review-actions">
-          <p>この操作で、確認した内容だけを分析に送信します。</p>
-          <div className="review-buttons">
-            <button type="button" className="secondary-button" onClick={() => setEditing(!editing)}>{editing ? '修正を完了' : '内容を修正する'}</button>
-            <button type="submit" className="primary-button" disabled={!valid || status === 'loading'}>
-              {status === 'loading' ? <><LoaderCircle className="animate-spin" />分析しています</> : <>この内容で分析<ArrowRight size={20} /></>}
-            </button>
-          </div>
-        </div>
-      </form>
-    </main>
-  )
-}
-
-function ReviewSummary({ task }: { task: BusinessTask }) {
-  return (
-    <dl className="review-summary">
-      <div><dt>目的</dt><dd>{task.purpose}</dd></div>
-      <div className="summary-pair"><dt>頻度</dt><dd>{task.frequency}</dd><dt>所要時間</dt><dd>{task.duration}</dd></div>
-      <div><dt>使用ツール</dt><dd>{task.tools.join('、')}</dd></div>
-      <div><dt>工程</dt><dd><ol>{task.steps.map((step) => <li key={step}>{step}</li>)}</ol></dd></div>
-      <div><dt>判断が必要な箇所</dt><dd><ul>{task.decisionPoints.map((point) => <li key={point}>{point}</li>)}</ul></dd></div>
-      <div><dt>成果物</dt><dd>{task.output}</dd></div>
-      <div><dt>成果物の必要性</dt><dd><strong>{outputRequirementLabel[task.outputRequirement]}</strong><p>{task.outputRequirementReason}</p></dd></div>
-    </dl>
-  )
-}
-
-const outputRequirementLabel: Record<OutputRequirement, string> = {
-  NOT_REQUIRED: '定期成果物は不要',
-  ON_DEMAND: '必要なときだけ',
-  REQUIRED: '定期的に必要',
-  UNKNOWN: '未確認',
-}
-
-function OutputRequirementField({ value, onChange }: { value: OutputRequirement; onChange: (value: OutputRequirement) => void }) {
-  return (
-    <label className="editable-field select-field" htmlFor="field-output-requirement">
-      <span>成果物の必要性<small>定期レポートを残す必要があるか</small></span>
-      <select id="field-output-requirement" value={value} onChange={(event) => onChange(event.target.value as OutputRequirement)}>
-        {(Object.entries(outputRequirementLabel) as [OutputRequirement, string][]).map(([option, label]) => <option key={option} value={option}>{label}</option>)}
-      </select>
-    </label>
-  )
-}
-
-function FrequencyField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const options = Array.from(new Set([value, '毎日', '週1回', '隔週', '月1回', '不定期']))
-  return (
-    <label className="editable-field select-field" htmlFor="field-frequency">
-      <span>頻度</span>
-      <select id="field-frequency" value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select>
-    </label>
-  )
-}
-
-function DurationField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const minutes = Number(value.match(/\d+/)?.[0] ?? '')
-  return (
-    <fieldset className="editable-field duration-field">
-      <legend>所要時間</legend>
-      <div>
-        <div className="preset-buttons" aria-label="所要時間の候補">
-          {[15, 30, 45, 60, 90].map((option) => <button key={option} type="button" aria-pressed={minutes === option} onClick={() => onChange(`${option}分`)}>{option}分</button>)}
-        </div>
-        <label className="number-input"><span>その他</span><input type="number" min="1" max="1440" step="5" inputMode="numeric" value={Number.isFinite(minutes) ? minutes : ''} onChange={(event) => onChange(event.target.value ? `${event.target.value}分` : '')} /><span>分</span></label>
-      </div>
-    </fieldset>
-  )
-}
-
-function ToolPicker({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
-  const [customTool, setCustomTool] = useState('')
-  const options = Array.from(new Set([...value, 'Salesforce', 'Excel', 'Google スプレッドシート', 'PowerPoint', 'Teams', 'Slack']))
-
-  function toggle(tool: string) {
-    onChange(value.includes(tool) ? value.filter((item) => item !== tool) : [...value, tool])
-  }
-
-  function addCustomTool() {
-    const tool = customTool.trim()
-    if (!tool || value.includes(tool)) return
-    onChange([...value, tool])
-    setCustomTool('')
-  }
-
-  return (
-    <fieldset className="editable-field tool-picker">
-      <legend>使用ツール</legend>
-      <div>
-        <div className="tool-options">{options.map((tool) => <label key={tool}><input type="checkbox" checked={value.includes(tool)} onChange={() => toggle(tool)} /><span>{tool}</span></label>)}</div>
-        <div className="custom-tool"><input value={customTool} onChange={(event) => setCustomTool(event.target.value)} placeholder="その他のツール" /><button type="button" className="secondary-button" onClick={addCustomTool} disabled={!customTool.trim()}>追加</button></div>
-      </div>
-    </fieldset>
-  )
-}
-
-function EditableField({ label, help, value, onChange, multiline = false }: { label: string; help?: string; value: string; onChange: (value: string) => void; multiline?: boolean }) {
-  const id = `field-${label}`
-  return (
-    <label className="editable-field" htmlFor={id}>
-      <span>{label}{help && <small>{help}</small>}</span>
-      {multiline
-        ? <textarea id={id} value={value} rows={Math.max(3, value.split('\n').length + 1)} onChange={(event) => onChange(event.target.value)} />
-        : <input id={id} value={value} onChange={(event) => onChange(event.target.value)} />}
-    </label>
-  )
-}
-
-const ratingLabel: Record<RatingValue, string> = { HIGH: '高い', MEDIUM: '中程度', LOW: '低い' }
-
-function currentStepsFromTask(task: BusinessTask): WorkflowStep[] {
-  return task.steps.map((step, index) => ({
-    id: `current-${index}`,
-    label: step,
-    detail: index === 0 ? '入力・情報を取得' : index === task.steps.length - 1 ? task.output : '現在は人が対応',
-    kind: index === 0 ? 'system' : index === task.steps.length - 1 ? 'output' : 'human',
-  }))
-}
-
-function displayProblemValue(value: string) {
-  if (value === 'HIGH') return '高い'
-  if (value === 'MEDIUM') return '中程度'
-  if (value === 'LOW') return '低い'
-  return value
-}
-
-function AnalysisScreen({ task, design, onNext }: { task: BusinessTask; design: BusinessDesign; onNext: () => void }) {
-  const analysis = design.analysis
-  const currentSteps = currentStepsFromTask(task)
-
-  return (
-    <main className="tool-main report-tool">
-      <ToolTitle title="分析結果" summary={analysis.conclusion} />
-
-      <section className="purpose-check" aria-labelledby="purpose-check-heading">
-        <h2 id="purpose-check-heading">目的と現在の手段</h2>
-        <dl>
-          <div><dt>達成したいこと</dt><dd>{analysis.purposeCheck.outcome}</dd></div>
-          <div><dt>現在の手段</dt><dd>{analysis.purposeCheck.currentMeans}</dd></div>
-          <div><dt>成果物の判断</dt><dd>{analysis.purposeCheck.outputDecision}</dd></div>
-        </dl>
-      </section>
-
-      <div className="report-sections">
-        <details className="report-section">
-          <summary><span>現在の工程</span><small>{task.steps.length}工程</small></summary>
-          <WorkflowDiagram steps={currentSteps} ariaLabel="現在の業務工程" />
-        </details>
-
-        <details className="report-section" open>
-          <summary><span>改善候補</span><small>{analysis.problems.length}件</small></summary>
-          <div className="issue-table-wrap">
-            <table className="issue-table"><thead><tr><th>課題</th><th>根拠</th><th>状態</th></tr></thead><tbody>
-              {analysis.problems.map((problem) => <tr key={problem.label}><th>{problem.label}</th><td>{problem.detail}</td><td>{displayProblemValue(problem.value)}</td></tr>)}
-            </tbody></table>
-          </div>
-          <dl className="rating-list">
-            <div><dt>改善効果</dt><dd>{ratingLabel[analysis.ratings.opportunity]}</dd></div>
-            <div><dt>実行しやすさ</dt><dd>{ratingLabel[analysis.ratings.implementation]}</dd></div>
-            <div><dt>定型処理との相性</dt><dd>{ratingLabel[analysis.ratings.aiFit]}</dd></div>
-          </dl>
-        </details>
-
-        <details className="report-section">
-          <summary><span>根拠</span><small>事実と仮定</small></summary>
-          <div className="evidence-columns">
-            <EvidenceList label="事実" items={analysis.facts} />
-            <EvidenceList label="仮定" items={analysis.assumptions} />
-          </div>
-        </details>
-
-        <details className="report-section">
-          <summary><span>未確認事項</span><small>{analysis.unknowns.length}件</small></summary>
-          <ul className="plain-list">{analysis.unknowns.map((item) => <li key={item}>{item}</li>)}</ul>
-        </details>
-      </div>
-
-      <div className="analysis-actions">
-        <div><h2>現在の成果物を維持する自動化案</h2><p>{analysis.conventional.summary}</p></div>
-        <button type="button" className="primary-button" onClick={onNext}>再設計案を見る<ArrowRight size={20} /></button>
-      </div>
-    </main>
-  )
-}
-
-function EvidenceList({ label, items }: { label: string; items: string[] }) {
-  return <section className="evidence-list"><h3>{label}</h3><ul>{items.map((item) => <li key={item}>{item}</li>)}</ul></section>
-}
-
-function RedesignScreen({ design, onReset }: { design: BusinessDesign; onReset: () => void }) {
-  const task = design.businessTask
-  const redesignedSteps: WorkflowStep[] = design.redesign.workflow.map((step, index) => ({ ...step, id: `redesigned-${index}` }))
-  const impact = design.redesign.impact
-  const conditions = Array.from(new Set([...task.constraints, ...design.analysis.unknowns]))
-
-  return (
-    <main className="tool-main report-tool">
-      <ToolTitle title="改善案" summary={design.redesign.headline} />
-
-      <section className="comparison-section" aria-labelledby="comparison-heading">
-        <h2 id="comparison-heading">現在と見直し後</h2>
-        <div className="comparison-table-wrap">
-          <table className="comparison-table">
-            <thead><tr><th /><th>現在</th><th>見直し後</th></tr></thead>
-            <tbody>
-              <tr><th>定期成果物</th><td>{design.redesign.metrics.scheduledOutputBefore}</td><td>{design.redesign.metrics.scheduledOutputAfter}</td></tr>
-              <tr><th>人の定期作業</th><td>{design.redesign.metrics.routineHumanWorkBefore}</td><td>{design.redesign.metrics.routineHumanWorkAfter}</td></tr>
-              <tr><th>変化の検知</th><td>{design.redesign.metrics.detectionBefore}</td><td>{design.redesign.metrics.detectionAfter}</td></tr>
-              <tr><th>成果物</th><td>{design.redesign.metrics.outputBefore}</td><td>{design.redesign.metrics.outputAfter}</td></tr>
-              <tr><th>所要時間</th><td>{task.duration}／{task.frequency}</td><td>通常 {impact.routineMinutesPerCycle}分、変化時 {impact.exceptionMinutesMin}〜{impact.exceptionMinutesMax}分</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p className="result-note">{design.redesign.insight}</p>
-      </section>
-
-      <section className="plain-section">
-        <h2>新しい工程</h2>
-        <WorkflowDiagram steps={redesignedSteps} ariaLabel="見直し後の業務工程" />
-      </section>
-
-      <section className="plain-section">
-        <h2>担当する役割</h2>
-        <div className="role-table">
-          <div><strong>システム</strong><span>正確に繰り返す</span><ul>{design.redesign.roles.system.map((item) => <li key={item}>{item}</li>)}</ul></div>
-          <div><strong>AI</strong><span>変化の意味を整理する</span><ul>{design.redesign.roles.ai.map((item) => <li key={item}>{item}</li>)}</ul></div>
-          <div><strong>人</strong><span>確認し、判断する</span><ul>{design.redesign.roles.human.map((item) => <li key={item}>{item}</li>)}</ul></div>
-        </div>
-      </section>
-
-      <section className="plain-section conditions-section">
-        <div><h2>実装前に確認すること</h2><ul className="plain-list">{conditions.map((item) => <li key={item}>{item}</li>)}</ul></div>
-        <div className="impact-summary"><strong>通常 {impact.routineMinutesPerCycle}分</strong><span>定期作業</span><p>変化発生時のみ {impact.exceptionMinutesMin}〜{impact.exceptionMinutesMax}分を確認する想定です。{impact.assumption}</p></div>
-      </section>
-
-      <div className="finish-bar">
-        <div><strong>改善案の確認は完了です</strong><p>入力内容は分析のため外部AIサービスへ送信されますが、このアプリには保存されません。</p></div>
-        <button type="button" className="secondary-button" onClick={onReset}><RefreshCcw size={18} />最初から試す</button>
-      </div>
-    </main>
-  )
+function isReconnectError(error: unknown): boolean {
+  return error instanceof ApiError && (error.code === 'authentication_required' || error.code === 'google_not_connected')
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('home')
-  const [task, setTask] = useState<BusinessTask>(initialBusinessTask)
-  const [answers, setAnswers] = useState<string[]>([])
-  const [interviewOptions, setInterviewOptions] = useState<InterviewOptions | null>(null)
-  const [design, setDesign] = useState<BusinessDesign | null>(null)
-  const [events, setEvents] = useState<DemoEvent[]>(demoEvents)
-  const [selectedEvent, setSelectedEvent] = useState<DemoEvent>(demoEvents.find((event) => event.id === 'sales-report') ?? demoEvents[0])
+  const [screen, setScreen] = useState<Screen>('connect')
   const [calendar, setCalendar] = useState<CalendarState>({ configured: false, connected: false, loading: true })
   const [calendarBusy, setCalendarBusy] = useState(false)
   const [calendarError, setCalendarError] = useState('')
+  const [needsReconnect, setNeedsReconnect] = useState(false)
+  const [groups, setGroups] = useState<WorkGroup[]>([])
+  const [calendarRange, setCalendarRange] = useState<CalendarRange>(null)
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
+  const [projects, setProjects] = useState<ImprovementProject[]>([])
+  const [workspaceNotice, setWorkspaceNotice] = useState('')
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false)
+  const [flow, setFlow] = useState<SessionFlow>(emptyFlow)
+  const [savedProject, setSavedProject] = useState<ImprovementProject | null>(null)
+  const [drafts, setDrafts] = useState<SessionDraft[]>(() => listDrafts())
+  const [mutedWork, setMutedWork] = useState<Set<string>>(() => listMutedWork())
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [showProfileDialog, setShowProfileDialog] = useState(false)
+  const [showAddWork, setShowAddWork] = useState(false)
+  // アクセス可能なカレンダーの一覧と表示中カレンダー。null=自分（primary）。
+  // リロードで自分に戻る（安全側の既定。永続化しない）
+  const [calendars, setCalendars] = useState<CalendarEntry[]>([])
+  const [viewingCalendar, setViewingCalendar] = useState<CalendarEntry | null>(null)
+  const [calendarListHint, setCalendarListHint] = useState('')
+
+  // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
+  const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
+  // 画面遷移や仮説生成をまたいだ古い非同期結果を無視するためのトークン
+  const sessionToken = useRef(0)
+  const noticeTimer = useRef<number | null>(null)
 
   useEffect(() => {
-    let active = true
-    const url = new URL(window.location.href)
-    const callbackResult = url.searchParams.get('calendar')
-    if (callbackResult === 'error') setCalendarError('Google Calendarを接続できませんでした。設定とアクセス許可を確認してください。')
-    if (callbackResult) {
-      url.searchParams.delete('calendar')
-      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
-    }
-    void getGoogleCalendarStatus()
-      .then((status) => { if (active) setCalendar({ ...status, loading: false }) })
-      .catch((error) => {
-        if (!active) return
-        setCalendar({ configured: false, connected: false, loading: false })
-        setCalendarError(error instanceof Error ? error.message : 'Google Calendarの接続状態を確認できませんでした。')
-      })
-    return () => { active = false }
+    const query = new URLSearchParams(window.location.search)
+    if (query.has('calendar')) window.history.replaceState({}, '', window.location.pathname)
+    void refreshCalendarStatus(query.get('calendar') === 'error')
   }, [])
 
-  function reset() {
-    setTask(initialBusinessTask)
-    setAnswers([])
-    setInterviewOptions(null)
-    setDesign(null)
-    setScreen('home')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+  useEffect(() => { window.scrollTo({ top: 0 }) }, [screen])
+
+  function refreshDrafts() {
+    setDrafts(listDrafts())
   }
 
-  function moveTo(next: Screen) {
-    setScreen(next)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+  // 回答途中のセッションを自動で下書き保存する（明示的な保存操作は不要）。
+  // refining / designError / planSource は一時状態なので保存しない。
+  useEffect(() => {
+    if (!flow.group || !flow.plan) return
+    if (flow.answers.length === 0 && !flow.design) return
+    saveDraft({
+      version: 1,
+      group: flow.group,
+      plan: flow.plan,
+      answers: flow.answers,
+      pendingQuestions: flow.pendingQuestions,
+      askedQuestions: flow.askedQuestions,
+      interviewComplete: flow.interviewComplete,
+      followUpRounds: flow.followUpRounds,
+      task: flow.task,
+      refinedTask: flow.refinedTask,
+      design: flow.design,
+      updatedAt: new Date().toISOString(),
+    })
+  }, [flow])
+
+  // ワークスペースへ戻るたびに下書き一覧を読み直す（別タブの更新も拾う）
+  useEffect(() => {
+    if (screen === 'workspace') refreshDrafts()
+  }, [screen])
+
+  useEffect(() => {
+    const onStorage = () => refreshDrafts()
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  function prefetchPlan(group: WorkGroup, userProfile: UserProfile | null): Promise<InterviewPlan> {
+    const cached = planCache.current.get(group.id)
+    if (cached) return cached
+    const promise = generateInterviewPlan(group, userProfile)
+    promise.catch(() => planCache.current.delete(group.id))
+    planCache.current.set(group.id, promise)
+    return promise
   }
 
-  function startDemo() {
-    setEvents(demoEvents)
-    setSelectedEvent(demoEvents.find((event) => event.id === 'sales-report') ?? demoEvents[0])
-    setAnswers([])
-    setInterviewOptions(null)
-    setCalendarError('')
-    moveTo('discovery')
-  }
-
-  function connectCalendar() {
-    window.location.assign('/api/google/connect')
-  }
-
-  async function startFromCalendar() {
-    if (calendarBusy) return
-    setCalendarBusy(true)
-    setCalendarError('')
+  async function refreshCalendarStatus(callbackError = false) {
+    setCalendar((current) => ({ ...current, loading: true }))
+    if (callbackError) setCalendarError('Google Calendarとの接続を完了できませんでした。設定と権限を確認してください。')
     try {
-      const result = await getGoogleCalendarEvents()
-      const calendarEvents = calendarEventsToWorkItems(result.events)
-      if (!calendarEvents.length) throw new Error('前後1週間に表示できる予定がありません。')
-      setEvents(calendarEvents)
-      setSelectedEvent(calendarEvents.find((event) => event.candidate && !event.allDay) ?? calendarEvents.find((event) => !event.allDay) ?? calendarEvents[0])
-      setAnswers([])
-      setInterviewOptions(null)
-      moveTo('discovery')
+      const next = await getGoogleCalendarStatus()
+      setCalendar({ ...next, loading: false })
+      if (next.connected) {
+        // 接続済みならワークスペースへ入ってから読み込む（読み込み失敗で接続画面へ
+        // 誤って戻さない。ConnectScreenの接続ボタン再押下も防ぐ）
+        setScreen('workspace')
+        void loadCalendarList()
+        await loadWorkspace()
+      }
     } catch (error) {
-      setCalendarError(error instanceof Error ? error.message : 'Google Calendarから予定を取得できませんでした。')
-      const status = await getGoogleCalendarStatus().catch(() => null)
-      if (status) setCalendar({ ...status, loading: false })
-    } finally {
-      setCalendarBusy(false)
+      setCalendar((current) => ({ ...current, loading: false }))
+      setCalendarError(error instanceof Error ? error.message : '接続状態を確認できませんでした。')
     }
   }
 
-  async function disconnectCalendar() {
-    if (calendarBusy) return
-    setCalendarBusy(true)
+  // regex分類のままのタイトルをAIに分類させ、返ってきたら差し替える。
+  // タイトルキーの上書きなので、途中で再読込されても安全（冪等）。
+  function refineCategoriesInBackground(groups: WorkGroup[], cached: Record<string, WorkCategory>, userProfile: UserProfile | null) {
+    const unclassified = [...new Set(groups.filter((group) => !(normalizeWorkTitle(group.title) in cached)).map((group) => group.title))].slice(0, 100)
+    if (!unclassified.length) return
+    void classifyWork(unclassified, userProfile)
+      .then((map) => {
+        mergeCategoryCache(map)
+        setGroups((current) => applyCategories(current, map))
+      })
+      .catch(() => {
+        // 分類できなくてもregexフォールバックのまま表示できる
+      })
+  }
+
+  // アクセス可能なカレンダーの一覧（自分＋共有）。旧接続は一覧スコープが無く403になるため
+  // ヒントだけ出して自分のカレンダーで動き続ける
+  async function loadCalendarList() {
+    try {
+      const result = await getCalendarList()
+      setCalendars(result.calendars)
+      setCalendarListHint('')
+    } catch (error) {
+      setCalendars([])
+      setCalendarListHint(error instanceof ApiError && error.code === 'google_scope_denied'
+        ? '他のカレンダーを表示するには、接続を解除して再接続してください。'
+        : '')
+    }
+  }
+
+  async function loadWorkspace(view: CalendarEntry | null = viewingCalendar) {
+    setCalendarBusy(true); setCalendarError('')
+    // 自分のカレンダー（primary）は接頭辞なしの現行ID体系のまま扱う
+    const other = view && !view.primary ? { id: view.id, name: view.summary } : undefined
+    try {
+      const [calendarResult, savedProjects, userProfile] = await Promise.all([
+        getGoogleCalendarEvents(other?.id),
+        getImprovementProjects(),
+        getProfile().catch(() => null),
+      ])
+      const cachedCategories = readCategoryCache()
+      // 手動登録の業務は自分のカレンダー表示にだけ合流させる
+      const calendarGroups = groupCalendarEvents(calendarResult.events, other)
+      const nextGroups = applyCategories(other ? calendarGroups : mergeWorkGroups(calendarGroups, listManualWork()), cachedCategories)
+      planCache.current.clear()
+      setGroups(nextGroups)
+      setProfile(userProfile)
+      if (!userProfile && !profilePrompted()) setShowProfileDialog(true)
+      // 他人の業務は閲覧者のプロフィール（職種等）で解釈させない
+      refineCategoriesInBackground(nextGroups, cachedCategories, other ? null : userProfile)
+      setCalendarRange(calendarResult.range ?? null)
+      setFetchedAt(new Date())
+      setProjects(savedProjects)
+      setNeedsReconnect(false)
+      setScreen('workspace')
+      const currentKey = other?.id ?? null
+      const visibleProjects = savedProjects.filter((project) => calendarKeyOfGroupId(projectContext(project).observed.sourceGroupId) === currentKey)
+      const activeTitles = visibleProjects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title)
+      const focus = rankDiscoveryCandidates(nextGroups, [...activeTitles, ...mutedWork])[0]
+      // 下書きがあるなら質問はその中にあるので先読みしない
+      if (focus && !loadDraft(focus.id)) prefetchPlan(focus, other ? null : userProfile).catch(() => {})
+    } catch (error) {
+      if (isReconnectError(error)) setNeedsReconnect(true)
+      setCalendarError(error instanceof Error ? error.message : 'ワークスペースを読み込めませんでした。')
+    } finally { setCalendarBusy(false) }
+  }
+
+  function handleSelectCalendar(entry: CalendarEntry | null) {
+    // primary選択はnull（自分）と同義に正規化する（既存ID体系の維持）
+    const next = entry && !entry.primary ? entry : null
+    setViewingCalendar(next)
+    void loadWorkspace(next)
+  }
+
+  function clearSession() {
+    sessionToken.current += 1
+    setFlow(emptyFlow)
+    setSavedProject(null)
     setCalendarError('')
+  }
+
+  // 暫定の構造化は決定論で即時に行う。スキーマ検査（語彙・字数）に落ちる自由入力は
+  // マスクして再試行し、それでも組めなければnull（裏のLLM整理を待つ）。
+  function buildProvisionalTask(group: WorkGroup, nextAnswers: InterviewAnswer[]): BusinessTask | null {
+    const observed = toObservation(group)
+    try {
+      return createDeterministicTask(observed, nextAnswers)
+    } catch {
+      try {
+        const masked = nextAnswers.map((answer) => answer.source === 'FREE_TEXT' ? { ...answer, answer: '未確認' } : answer)
+        return createDeterministicTask(observed, masked)
+      } catch {
+        return null
+      }
+    }
+  }
+
+  function startSession(group: WorkGroup) {
+    const draft = loadDraft(group.id)
+    clearSession()
+    if (draft) {
+      // 中断していた続きから再開する。観測値はカレンダーの最新があればそちらを使う
+      const freshGroup = groups.find((item) => item.id === draft.group.id) ?? draft.group
+      const provisional = draft.answers.length ? buildProvisionalTask(freshGroup, draft.answers) : null
+      const task = provisional ? (draft.refinedTask ? mergeRefined(draft.refinedTask, provisional) : provisional) : draft.task
+      setFlow({
+        ...emptyFlow,
+        group: freshGroup,
+        plan: draft.plan,
+        planSource: 'ai',
+        answers: draft.answers,
+        task,
+        refinedTask: draft.refinedTask,
+        pendingQuestions: draft.pendingQuestions,
+        askedQuestions: mergeQuestions(draft.askedQuestions, draft.plan.questions),
+        // 仮説まで作っていた下書きはインタビュー完了として扱う（旧下書きの自然な移行）
+        interviewComplete: draft.interviewComplete || Boolean(draft.design),
+        followUpRounds: draft.followUpRounds,
+        design: draft.design,
+      })
+      setScreen('session')
+      const coreDone = draft.plan.questions.every((question) => draft.answers.some((answer) => answer.questionId === question.id))
+      if (coreDone && !draft.design && !draft.interviewComplete && draft.pendingQuestions.length === 0
+        && draft.followUpRounds < MAX_FOLLOWUP_ROUNDS && draft.answers.length < QUESTION_BUDGET) {
+        void refineInBackground(freshGroup, draft.answers)
+      }
+      return
+    }
+    setFlow({ ...emptyFlow, group })
+    setScreen('session')
+    const token = sessionToken.current
+    void (async () => {
+      let nextPlan: InterviewPlan
+      let source: 'ai' | 'generic' = 'ai'
+      try {
+        nextPlan = await prefetchPlan(group, profile)
+      } catch {
+        nextPlan = fallbackCorePlan()
+        source = 'generic'
+      }
+      if (sessionToken.current === token) {
+        setFlow((current) => ({ ...current, plan: nextPlan, planSource: source, askedQuestions: mergeQuestions(current.askedQuestions, nextPlan.questions) }))
+      }
+    })()
+  }
+
+  function handleAnswer(answer: InterviewAnswer) {
+    setFlow((current) => {
+      if (!current.group || !current.plan) return current
+      const nextAnswers = [...current.answers.filter((item) => item.questionId !== answer.questionId), answer]
+      const provisional = buildProvisionalTask(current.group, nextAnswers)
+      const nextTask = provisional ? (current.refinedTask ? mergeRefined(current.refinedTask, provisional) : provisional) : current.task
+      const nextPending = current.pendingQuestions.filter((question) => question.id !== answer.questionId)
+      const coreJustDone = current.plan.questions.every((question) => nextAnswers.some((item) => item.questionId === question.id))
+        && current.plan.questions.some((question) => question.id === answer.questionId)
+
+      let pendingQuestions = nextPending
+      let askedQuestions = current.askedQuestions
+      let interviewComplete = current.interviewComplete
+      if (coreJustDone) {
+        // 裏で整理＋追加質問生成（ラウンド1）を開始しつつ、生成待ちの間は
+        // 決定論カタログのつなぎ質問（制約・依存・リスク）を即時に出す
+        const bridges = nextTask
+          ? bridgeQuestionsFor(nextTask.contextStatus).filter((question) => !nextAnswers.some((item) => item.questionId === question.id))
+          : []
+        pendingQuestions = mergeQuestions(nextPending, bridges)
+        askedQuestions = mergeQuestions(current.askedQuestions, bridges)
+        void refineInBackground(current.group, nextAnswers)
+      } else if (!interviewComplete && nextPending.length === 0 && !current.refining) {
+        // キューが空になった：残ラウンド・残予算・重要次元のUNKNOWNが揃えば次ラウンド、でなければ完了
+        if (current.followUpRounds < MAX_FOLLOWUP_ROUNDS && nextAnswers.length < QUESTION_BUDGET && criticalUnknownRemains(nextTask)) {
+          void refineInBackground(current.group, nextAnswers)
+        } else {
+          interviewComplete = true
+        }
+      }
+      return {
+        ...current,
+        answers: nextAnswers,
+        task: nextTask,
+        pendingQuestions,
+        askedQuestions,
+        interviewComplete,
+        // 回答が増えたら生成済み仮説は古くなるので破棄（次に進むとき再生成）
+        design: null,
+        designError: '',
+      }
+    })
+  }
+
+  // 回答を裏でLLMに整理させ、次ラウンドの追加質問を生成する（ユーザーはつなぎ質問に回答中）。
+  // 失敗してもフローは止めない（taskがnullのままの場合だけSessionScreenが再試行を出す）。
+  async function refineInBackground(group: WorkGroup, nextAnswers: InterviewAnswer[]) {
+    const token = sessionToken.current
+    setFlow((current) => ({ ...current, refining: true }))
+    try {
+      const hasFreeText = nextAnswers.some((answer) => answer.source === 'FREE_TEXT')
+      let baseTask = buildProvisionalTask(group, nextAnswers)
+      if (hasFreeText || !baseTask) {
+        baseTask = await extractBusinessTask(nextAnswers, group)
+        if (sessionToken.current !== token) return
+        const refined = baseTask
+        setFlow((current) => {
+          // 整理中につなぎ質問へ回答が進んでいることがあるため、最新の回答の決定論を上に重ねる
+          const provisionalNow = current.group ? buildProvisionalTask(current.group, current.answers) : null
+          return { ...current, refinedTask: refined, task: provisionalNow ? mergeRefined(refined, provisionalNow) : refined }
+        })
+      }
+      const followUp = await generateFollowUpPlan(baseTask)
+      if (sessionToken.current !== token) return
+      setFlow((current) => {
+        // 到着時点の最新状態で重複を排除する：回答済みid・CORE以外で回答済みの次元（つなぎ質問と
+        // 同じ次元の生成質問を落とす）・保留中の次元。予算の残りに収まる分だけ採用する
+        const answeredIds = new Set(current.answers.map((item) => item.questionId))
+        const coreIds = new Set(current.plan?.questions.map((question) => question.id) ?? [])
+        const postCoreDimensions = new Set(current.answers.filter((item) => !coreIds.has(item.questionId)).map((item) => item.dimension))
+        const pendingDimensions = new Set(current.pendingQuestions.map((question) => question.dimension))
+        const budgetLeft = Math.max(0, QUESTION_BUDGET - current.answers.length - current.pendingQuestions.length)
+        const fresh = followUp.questions
+          .filter((question) => !answeredIds.has(question.id) && !postCoreDimensions.has(question.dimension) && !pendingDimensions.has(question.dimension))
+          .slice(0, budgetLeft)
+        return {
+          ...current,
+          pendingQuestions: mergeQuestions(current.pendingQuestions, fresh),
+          askedQuestions: mergeQuestions(current.askedQuestions, fresh),
+          followUpRounds: current.followUpRounds + 1,
+          // 新しい質問が無くキューも空なら、このラウンドでインタビューを終える
+          interviewComplete: current.interviewComplete || (fresh.length === 0 && current.pendingQuestions.length === 0),
+        }
+      })
+    } catch {
+      // 追加質問なしで進められる。キューが空なら完了扱いにして確認画面へ進める
+      // （未確認の項目は仮説側がunknownsとして明示する）
+      if (sessionToken.current === token) {
+        setFlow((current) => ({ ...current, interviewComplete: current.interviewComplete || current.pendingQuestions.length === 0 }))
+      }
+    } finally {
+      if (sessionToken.current === token) setFlow((current) => ({ ...current, refining: false }))
+    }
+  }
+
+  function retryRefine() {
+    if (flow.group) void refineInBackground(flow.group, flow.answers)
+  }
+
+  // LLMが整理したタスクを土台に、その後の回答の決定論的な意味を上書きで反映する
+  function mergeRefined(refined: BusinessTask, provisional: BusinessTask): BusinessTask {
+    return {
+      ...refined,
+      ...provisional,
+      purpose: provisional.purpose === '未確認' ? refined.purpose : provisional.purpose,
+      tools: provisional.tools.length ? provisional.tools : refined.tools,
+      inputs: provisional.inputs.length ? provisional.inputs : refined.inputs,
+      output: provisional.output === '未確認' ? refined.output : provisional.output,
+    }
+  }
+
+  async function proceedToHypothesis() {
+    const { group, task, answers, design } = flow
+    if (!group) return
+    // 仮説へ進む＝インタビュー終了（早期離脱を含む）。残りの未確認は検証条件になる
+    setFlow((current) => ({ ...current, interviewComplete: true }))
+    const finalTask = task ?? await extractBusinessTask(answers, group)
+    setFlow((current) => ({ ...current, task: finalTask }))
+    setScreen('hypothesis')
+    // 下書きから復元した仮説があればLLMを呼び直さない（回答が増えるとhandleAnswerがdesignを破棄する）
+    if (!design) void generateDesign(finalTask)
+  }
+
+  async function generateDesign(forTask: BusinessTask) {
+    // 進行中の古い整理・古い仮説生成をここで無効化する。
+    // 保存される仮説が「最後の回答を反映したタスク」から作られることを保証する。
+    sessionToken.current += 1
+    const token = sessionToken.current
+    setFlow((current) => ({ ...current, design: null, designError: '', refining: false }))
+    try {
+      const nextDesign = await generateBusinessDesign(forTask, profile)
+      if (sessionToken.current === token) setFlow((current) => ({ ...current, design: nextDesign }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '仮説を作成できませんでした。'
+      if (sessionToken.current === token) setFlow((current) => ({ ...current, designError: message }))
+    }
+  }
+
+  function showNotice(message: string) {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
+    setWorkspaceNotice(message)
+    noticeTimer.current = window.setTimeout(() => setWorkspaceNotice(''), 8000)
+  }
+
+  async function saveProject() {
+    if (!flow.design) return
+    const project = await createImprovementProject(flow.design)
+    // 保存できたら下書きは役目を終える。遅延中のバックグラウンド整理がsetFlowで
+    // 下書きを復活させないよう、セッションも原子的に終了する。
+    if (flow.group) deleteDraft(flow.group.id)
+    sessionToken.current += 1
+    setFlow(emptyFlow)
+    refreshDrafts()
+    setSavedProject(project); setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)])
+    showNotice(`${projectName(project)}を、検証する仮説として保存しました。`)
+    setScreen('workspace')
+  }
+
+  async function updateProjectStatus(status: ProjectStatus) {
+    if (!savedProject) return
+    const token = sessionToken.current
+    try {
+      const project = await updateImprovementProjectStatus(savedProject.id, status)
+      if (sessionToken.current !== token) return
+      setSavedProject(project); setProjects((current) => current.map((item) => item.id === project.id ? project : item))
+    } catch (error) {
+      if (isReconnectError(error)) setNeedsReconnect(true)
+      throw error
+    }
+  }
+
+  async function addProjectContext(id: string, answer: InterviewAnswer) {
+    if (!savedProject) return
+    const token = sessionToken.current
+    const questionId = `project-${id}`
+    const baseTask = projectContext(savedProject)
+    const finalAnswer: InterviewAnswer = { ...answer, questionId }
+    const nextAnswers = [...baseTask.answerEvidence.filter((item) => item.questionId !== questionId), finalAnswer]
+    try {
+      const nextTask = await extractBusinessTaskFromObservation(nextAnswers, baseTask.observed)
+      const project = await updateImprovementProjectContext(savedProject.id, nextTask, `「${answer.question}」について情報を追加`)
+      if (sessionToken.current !== token) return
+      setSavedProject(project)
+      setProjects((current) => current.map((item) => item.id === project.id ? project : item))
+    } catch (error) {
+      if (isReconnectError(error)) setNeedsReconnect(true)
+      throw error
+    }
+  }
+
+  async function refreshProjectHypothesis() {
+    if (!savedProject) return
+    const token = sessionToken.current
+    try {
+      const nextDesign = await generateBusinessDesign(projectContext(savedProject), profile)
+      const project = await updateImprovementProject(savedProject.id, nextDesign, '追加した業務情報を反映して仮説を更新')
+      if (sessionToken.current !== token) return
+      setSavedProject(project)
+      setProjects((current) => current.map((item) => item.id === project.id ? project : item))
+    } catch (error) {
+      if (isReconnectError(error)) setNeedsReconnect(true)
+      throw error
+    }
+  }
+
+  async function deleteProject() {
+    if (!savedProject) return
+    const name = projectName(savedProject)
+    await deleteImprovementProject(savedProject.id)
+    setProjects((current) => current.filter((item) => item.id !== savedProject.id))
+    setSavedProject(null)
+    showNotice(`${name}を削除しました。`)
+    setScreen('workspace')
+  }
+
+  function openProject(project: ImprovementProject) {
+    clearSession()
+    setSavedProject(project)
+    setScreen('note')
+  }
+
+  async function handleSaveProfile(next: UserProfile) {
+    const saved = await saveProfile(next)
+    setProfile(saved)
+    markProfilePrompted()
+    setShowProfileDialog(false)
+  }
+
+  function handleSkipProfile() {
+    markProfilePrompted()
+    setShowProfileDialog(false)
+  }
+
+  function handleAddWork(group: WorkGroup) {
+    // 同じ名前の業務がすでにあるなら二重計上させない（カレンダー実測優先）
+    if (groups.some((item) => normalizeWorkTitle(item.title) === normalizeWorkTitle(group.title))) {
+      setCalendarError(`「${group.title}」は同じ名前の業務がすでに一覧にあります。`)
+      return
+    }
+    addManualWork(group)
+    setCalendarError('')
+    setGroups((current) => mergeWorkGroups(current, [group]))
+    refineCategoriesInBackground([group], readCategoryCache(), profile)
+    showNotice(`「${group.title}」を追加しました。内訳と業務の一覧から確認できます。`)
+  }
+
+  function handleRemoveManualWork(id: string) {
+    removeManualWork(id)
+    planCache.current.delete(id)
+    setGroups((current) => current.filter((group) => group.id !== id))
+  }
+
+  function handleMuteWork(title: string) {
+    setMutedWork(muteWork(title))
+  }
+
+  function handleUnmuteWork(title: string) {
+    setMutedWork(unmuteWork(title))
+  }
+
+  function discardDraft(groupId: string) {
+    deleteDraft(groupId)
+    // 同じ業務のセッションがメモリに残っていると、遅延したsetFlow→自動保存で
+    // 削除済み下書きが復活するため、セッションごと破棄する
+    if (flow.group?.id === groupId) clearSession()
+    refreshDrafts()
+  }
+
+  async function disconnect() {
+    setCalendarBusy(true); setCalendarError('')
     try {
       await disconnectGoogleCalendar()
       setCalendar({ configured: calendar.configured, connected: false, loading: false })
+      clearSession(); setGroups([]); setProjects([]); planCache.current.clear()
+      clearAllDrafts(); refreshDrafts()
+      setCalendars([]); setViewingCalendar(null); setCalendarListHint('')
+      setNeedsReconnect(false)
+      setScreen('connect')
     } catch (error) {
-      setCalendarError(error instanceof Error ? error.message : 'Google Calendarとの接続を解除できませんでした。')
-    } finally {
-      setCalendarBusy(false)
-    }
+      setCalendarError(error instanceof Error ? error.message : '接続を解除できませんでした。')
+    } finally { setCalendarBusy(false) }
   }
 
   function goBack() {
-    const previous = backScreen[screen]
-    if (previous) moveTo(previous)
+    if (screen === 'hypothesis') setScreen('session')
+    else setScreen(calendar.connected ? 'workspace' : 'connect')
   }
 
-  async function startInterview() {
-    if (!interviewOptions) {
-      try {
-        setInterviewOptions(await generateInterviewOptions(selectedEvent))
-      } catch {
-        setInterviewOptions(null)
-      }
-    }
-    moveTo('interview')
+  function goHome() {
+    setScreen(calendar.connected ? 'workspace' : 'connect')
   }
 
-  async function completeQuestions(nextAnswers: string[]) {
-    const extractedTask = await extractBusinessTask(nextAnswers, selectedEvent)
-    setTask(extractedTask)
-    moveTo('review')
+  function restartSession() {
+    const group = flow.group
+    if (group) deleteDraft(group.id)
+    clearSession()
+    refreshDrafts()
+    if (group) startSession(group)
+    else goHome()
   }
 
-  function continueWithDemoTask() {
-    setTask(initialBusinessTask)
-    moveTo('review')
-  }
+  // 表示中カレンダー由来の仮説だけをワークスペースに出す（別カレンダーの実測との嘘の削減マッチを防ぐ）
+  const currentCalendarKey = viewingCalendar && !viewingCalendar.primary ? viewingCalendar.id : null
+  const visibleProjects = projects.filter((project) => calendarKeyOfGroupId(projectContext(project).observed.sourceGroupId) === currentCalendarKey)
 
-  async function completeReview(approvedTask: BusinessTask) {
-    const generatedDesign = await generateBusinessDesign(approvedTask)
-    setTask(approvedTask)
-    setDesign(generatedDesign)
-    moveTo('analysis')
-  }
-
-  function continueWithDemoDesign() {
-    setTask(demoDesign.businessTask)
-    setDesign(demoDesign)
-    moveTo('analysis')
-  }
-
-  return (
-    <div className="app-shell">
-      <AppHeader screen={screen} onBack={goBack} onReset={reset} />
-      {screen === 'home' && <HomeScreen calendar={calendar} busy={calendarBusy} error={calendarError} onConnect={connectCalendar} onCalendarStart={startFromCalendar} onDisconnect={disconnectCalendar} onDemoStart={startDemo} />}
-      {screen === 'discovery' && <DiscoveryScreen events={events} selectedEvent={selectedEvent} onSelectEvent={(event) => { setSelectedEvent(event); setAnswers([]); setInterviewOptions(null) }} onSelect={startInterview} />}
-      {screen === 'interview' && <InterviewScreen eventTitle={selectedEvent.title} answers={answers} setAnswers={setAnswers} options={interviewOptions} onExtract={completeQuestions} onDemoFallback={continueWithDemoTask} />}
-      {screen === 'review' && <ReviewScreen task={task} setTask={setTask} onAnalyze={completeReview} onDemoFallback={continueWithDemoDesign} />}
-      {screen === 'analysis' && design && <AnalysisScreen task={task} design={design} onNext={() => moveTo('redesign')} />}
-      {screen === 'redesign' && design && <RedesignScreen design={design} onReset={reset} />}
-    </div>
-  )
+  return <div className="app-shell">
+    <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} email={calendar.connected ? calendar.email : undefined} picture={calendar.connected ? calendar.picture : undefined} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} onOpenProfile={() => setShowProfileDialog(true)} onDisconnect={() => void disconnect()} />
+    {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
+    {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={visibleProjects} drafts={drafts} calendars={calendars} viewingCalendar={viewingCalendar} calendarListHint={calendarListHint} onSelectCalendar={handleSelectCalendar} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onAddWork={() => setShowAddWork(true)} onRemoveManualWork={handleRemoveManualWork} />}
+    {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} interviewComplete={flow.interviewComplete} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
+    {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
+    {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}
+    {showProfileDialog && calendar.connected && <ProfileDialog profile={profile} onSave={handleSaveProfile} onSkip={handleSkipProfile} />}
+    {showAddWork && <AddWorkDialog onAdd={handleAddWork} onClose={() => setShowAddWork(false)} />}
+    {showRestartConfirm && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-heading"><h2 id="restart-heading">最初からやり直しますか？</h2><p>この業務の下書きを削除して、最初の質問からやり直します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setShowRestartConfirm(false)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { setShowRestartConfirm(false); restartSession() }}>やり直す</button></div></section></div>}
+  </div>
 }

@@ -1,8 +1,23 @@
 import { z } from 'zod'
-import { calendarEventsResponseSchema, calendarStatusSchema, type CalendarEventsResponse, type CalendarStatus } from '../shared/calendar-schema'
-import { businessDesignSchema, businessTaskSchema, interviewOptionsSchema, type BusinessDesign, type BusinessTask, type InterviewOptions } from '../shared/design-schema'
-import { interviewQuestions } from './demo-data'
-import type { DemoEvent } from './types'
+import { calendarEventsResponseSchema, calendarListResponseSchema, calendarStatusSchema, type CalendarEventsResponse, type CalendarListResponse, type CalendarStatus } from '../shared/calendar-schema'
+import {
+  businessDesignSchema,
+  businessTaskSchema,
+  interviewPlanSchema,
+  type BusinessDesign,
+  type BusinessTask,
+  type InterviewAnswer,
+  type InterviewPlan,
+  type WorkObservation,
+} from '../shared/design-schema'
+import {
+  improvementProjectSchema,
+  projectListSchema,
+  type ImprovementProject,
+  type ProjectStatus,
+} from '../shared/project-schema'
+import { userProfileSchema, type UserProfile } from '../shared/profile-schema'
+import { normalizeWorkTitle, toObservation, workCategorySchema, type WorkCategory, type WorkGroup } from '../shared/work-group'
 
 const apiErrorSchema = z.object({
   error: z.object({
@@ -17,13 +32,25 @@ const businessTaskResponseSchema = z.object({
   meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
 })
 
-const interviewOptionsResponseSchema = z.object({
-  options: interviewOptionsSchema,
+const interviewPlanResponseSchema = z.object({
+  options: interviewPlanSchema,
+  meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
+})
+
+const followUpPlanResponseSchema = z.object({
+  plan: interviewPlanSchema,
   meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
 })
 
 const designResponseSchema = z.object({
   design: businessDesignSchema,
+  meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
+})
+
+const projectResponseSchema = z.object({ project: improvementProjectSchema }).strict()
+
+const classifyResponseSchema = z.object({
+  categories: z.array(z.object({ title: z.string(), category: workCategorySchema }).passthrough()).max(100),
   meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
 })
 
@@ -33,14 +60,10 @@ export class ApiError extends Error {
   }
 }
 
-async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+async function requestJson<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    response = await fetch(path, init)
   } catch {
     throw new ApiError('network', 'APIに接続できません。通信状態を確認して再試行してください。')
   }
@@ -48,37 +71,33 @@ async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>): P
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
     const error = apiErrorSchema.safeParse(payload)
-    throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'AI APIへの接続に失敗しました。')
+    throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'APIへの接続に失敗しました。')
   }
 
   const parsed = schema.safeParse(payload)
-  if (!parsed.success) throw new ApiError('invalid_response', 'AI APIの応答形式を確認できませんでした。')
+  if (!parsed.success) throw new ApiError('invalid_response', 'サーバーの応答を読み取れませんでした。もう一度お試しください。')
   return parsed.data
 }
 
-async function getJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  let response: Response
-  try {
-    response = await fetch(path, { headers: { Accept: 'application/json' } })
-  } catch {
-    throw new ApiError('network', 'APIに接続できません。通信状態を確認して再試行してください。')
-  }
-  const payload: unknown = await response.json().catch(() => null)
-  if (!response.ok) {
-    const error = apiErrorSchema.safeParse(payload)
-    throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'Google Calendarへ接続できませんでした。')
-  }
-  const parsed = schema.safeParse(payload)
-  if (!parsed.success) throw new ApiError('invalid_response', 'APIの応答形式を確認できませんでした。')
-  return parsed.data
+function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>, method = 'POST'): Promise<T> {
+  return requestJson(path, schema, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 export async function getGoogleCalendarStatus(): Promise<CalendarStatus> {
-  return getJson('/api/google/status', calendarStatusSchema)
+  return requestJson('/api/google/status', calendarStatusSchema)
 }
 
-export async function getGoogleCalendarEvents(): Promise<CalendarEventsResponse> {
-  return getJson('/api/calendar/events', calendarEventsResponseSchema)
+export async function getGoogleCalendarEvents(calendarId?: string): Promise<CalendarEventsResponse> {
+  const query = calendarId ? `?${new URLSearchParams({ calendarId })}` : ''
+  return requestJson(`/api/calendar/events${query}`, calendarEventsResponseSchema)
+}
+
+export async function getCalendarList(): Promise<CalendarListResponse> {
+  return requestJson('/api/calendar/list', calendarListResponseSchema)
 }
 
 export async function disconnectGoogleCalendar(): Promise<void> {
@@ -94,26 +113,91 @@ export async function disconnectGoogleCalendar(): Promise<void> {
   throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'Google Calendarとの接続を解除できませんでした。')
 }
 
-type EventInput = Pick<DemoEvent, 'title' | 'duration'>
-
-export async function extractBusinessTask(answers: string[], event: EventInput): Promise<BusinessTask> {
-  const result = await postJson('/api/business-task', {
-    eventTitle: event.title,
-    eventDurationMinutes: event.duration,
-    answers: answers.map((answer, index) => ({ question: interviewQuestions[index].prompt, answer })),
-  }, businessTaskResponseSchema)
-  return result.businessTask
+export async function classifyWork(titles: string[], profile?: UserProfile | null): Promise<Record<string, WorkCategory>> {
+  const result = await postJson('/api/classify-work', { titles, ...(profile ? { profile } : {}) }, classifyResponseSchema)
+  const map: Record<string, WorkCategory> = {}
+  for (const item of result.categories) map[normalizeWorkTitle(item.title)] = item.category
+  return map
 }
 
-export async function generateInterviewOptions(event: EventInput): Promise<InterviewOptions> {
-  const result = await postJson('/api/interview-options', {
-    eventTitle: event.title,
-    eventDurationMinutes: event.duration,
-  }, interviewOptionsResponseSchema)
+const profileResponseSchema = z.object({ profile: userProfileSchema.nullable() }).strict()
+
+export async function getProfile(): Promise<UserProfile | null> {
+  const result = await requestJson('/api/profile', profileResponseSchema)
+  return result.profile
+}
+
+export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
+  const result = await postJson('/api/profile', profile, z.object({ profile: userProfileSchema }).strict(), 'PUT')
+  return result.profile
+}
+
+export async function generateInterviewPlan(group: WorkGroup, profile?: UserProfile | null): Promise<InterviewPlan> {
+  const result = await postJson('/api/interview-options', { observation: toObservation(group), ...(profile ? { profile } : {}) }, interviewPlanResponseSchema)
   return result.options
 }
 
-export async function generateBusinessDesign(businessTask: BusinessTask): Promise<BusinessDesign> {
-  const result = await postJson('/api/design', { businessTask }, designResponseSchema)
+export async function extractBusinessTask(answers: InterviewAnswer[], group: WorkGroup): Promise<BusinessTask> {
+  return extractBusinessTaskFromObservation(answers, toObservation(group))
+}
+
+export async function extractBusinessTaskFromObservation(answers: InterviewAnswer[], observation: WorkObservation): Promise<BusinessTask> {
+  const result = await postJson('/api/business-task', { observation, answers }, businessTaskResponseSchema)
+  return result.businessTask
+}
+
+export async function generateFollowUpPlan(businessTask: BusinessTask): Promise<InterviewPlan> {
+  const result = await postJson('/api/follow-up-questions', { businessTask }, followUpPlanResponseSchema)
+  return result.plan
+}
+
+export async function generateBusinessDesign(businessTask: BusinessTask, profile?: UserProfile | null): Promise<BusinessDesign> {
+  const result = await postJson('/api/design', { businessTask, ...(profile ? { profile } : {}) }, designResponseSchema)
   return result.design
+}
+
+export async function getImprovementProjects(): Promise<ImprovementProject[]> {
+  const result = await requestJson('/api/projects', projectListSchema)
+  return result.projects
+}
+
+export async function createImprovementProject(design: BusinessDesign): Promise<ImprovementProject> {
+  const result = await postJson('/api/projects', { proposal: design }, projectResponseSchema)
+  return result.project
+}
+
+export async function updateImprovementProjectStatus(id: string, status: ProjectStatus): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, { action: 'status', status }, projectResponseSchema, 'PATCH')
+  return result.project
+}
+
+export async function updateImprovementProject(id: string, design: BusinessDesign, revisionSummary?: string): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
+    action: 'proposal',
+    proposal: design,
+    ...(revisionSummary ? { revisionSummary } : {}),
+  }, projectResponseSchema, 'PATCH')
+  return result.project
+}
+
+export async function deleteImprovementProject(id: string): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  } catch {
+    throw new ApiError('network', 'APIに接続できません。通信状態を確認して再試行してください。')
+  }
+  if (response.ok) return
+  const payload: unknown = await response.json().catch(() => null)
+  const error = apiErrorSchema.safeParse(payload)
+  throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : '仮説を削除できませんでした。')
+}
+
+export async function updateImprovementProjectContext(id: string, pendingContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
+    action: 'context',
+    pendingContext,
+    revisionSummary,
+  }, projectResponseSchema, 'PATCH')
+  return result.project
 }

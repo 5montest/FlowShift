@@ -11,3 +11,4 @@ apikey.txt
 google-oauth.json
 token-encryption-key.txt
 .DS_Store
+.playwright-mcp/

@@ -1,12 +1,15 @@
 import { z } from 'zod'
-import type { CalendarEvent, CalendarEventsResponse, CalendarStatus } from '../shared/calendar-schema'
+import type { CalendarEvent, CalendarEventsResponse, CalendarListResponse, CalendarStatus } from '../shared/calendar-schema'
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke'
 const GOOGLE_CERTS_ENDPOINT = 'https://www.googleapis.com/oauth2/v3/certs'
-const CALENDAR_ENDPOINT = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.readonly'
+// アクセス可能なカレンダーの一覧に必要（events.readonlyだけでは一覧が取れない）。
+// 旧接続のトークンにはこのスコープが無い→/api/calendar/listが403になり、UIは再接続を促す
+const CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 const OAUTH_COOKIE = 'flowshift_oauth'
 const SESSION_COOKIE = 'flowshift_session'
 const OAUTH_COOKIE_SECONDS = 10 * 60
@@ -53,8 +56,15 @@ const jwtPayloadSchema = z.object({
   azp: z.string().optional(),
   sub: z.string().min(1).max(255),
   email: z.string().email().optional(),
+  // pictureの不備でログイン自体を失敗させない（Googleのアバター URLは1KBを超えることがある）
+  picture: z.string().url().max(4096).optional().catch(undefined),
   exp: z.number().int().positive(),
   iat: z.number().int().positive(),
+}).passthrough()
+
+const userinfoSchema = z.object({
+  email: z.string().email().optional().catch(undefined),
+  picture: z.string().url().max(4096).optional().catch(undefined),
 }).passthrough()
 
 const certsSchema = z.object({
@@ -78,18 +88,19 @@ const googleEventSchema = z.object({
 }).passthrough()
 
 const googleEventsSchema = z.object({
-  items: z.array(googleEventSchema).optional(),
+  items: z.array(googleEventSchema).max(2500).optional(),
+  nextPageToken: z.string().optional(),
 }).passthrough()
 
 type StoredToken = z.infer<typeof storedTokenSchema>
-type Session = { userId: number; email?: string }
+type Session = { userId: number; email?: string; picture?: string }
 type CredentialRow = { token_ciphertext: string; token_iv: string; key_version: string }
 
 export class GoogleCalendarError extends Error {
   constructor(
     public readonly code: string,
     message: string,
-    public readonly status: 400 | 401 | 403 | 500 | 502 | 503,
+    public readonly status: 400 | 401 | 403 | 404 | 500 | 502 | 503,
   ) {
     super(message)
   }
@@ -202,7 +213,7 @@ export async function createGoogleAuthorization(request: Request, env: Env): Pro
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri(request),
     response_type: 'code',
-    scope: `openid email ${CALENDAR_SCOPE}`,
+    scope: `openid email profile ${CALENDAR_SCOPE} ${CALENDAR_LIST_SCOPE}`,
     access_type: 'offline',
     include_granted_scopes: 'true',
     prompt: 'consent',
@@ -330,12 +341,26 @@ export async function finishGoogleAuthorization(request: Request, env: Env): Pro
   }
 
   const identity = await verifyGoogleIdToken(tokenResult.data.id_token, env.GOOGLE_CLIENT_ID)
+  let email = identity.email ?? null
+  let picture = identity.picture ?? null
+  if (!email || !picture) {
+    // Workspaceアカウント等ではID Tokenにpictureが載らないことがあるため、userinfoで補完（失敗しても連携は続行）
+    const info = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tokenResult.data.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    }).then((response) => response.ok ? response.json() : null).catch(() => null)
+    const parsed = userinfoSchema.safeParse(info)
+    if (parsed.success) {
+      email = email ?? parsed.data.email ?? null
+      picture = picture ?? parsed.data.picture ?? null
+    }
+  }
   const now = Date.now()
   await env.DB.prepare(`
-    INSERT INTO users (google_sub, email, created_at, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, updated_at = excluded.updated_at
-  `).bind(identity.sub, identity.email ?? null, now, now).run()
+    INSERT INTO users (google_sub, email, picture, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, picture = excluded.picture, updated_at = excluded.updated_at
+  `).bind(identity.sub, email, picture, now, now).run()
   const user = await env.DB.prepare('SELECT id FROM users WHERE google_sub = ?').bind(identity.sub).first<{ id: number }>()
   if (!user) throw new GoogleCalendarError('database_error', 'Googleユーザーを保存できませんでした。', 500)
 
@@ -368,18 +393,18 @@ export async function getGoogleSession(request: Request, env: Env): Promise<Sess
   if (!sessionToken) return null
   const sessionHash = encodeBase64Url(await sha256(sessionToken))
   const row = await env.DB.prepare(`
-    SELECT sessions.user_id, users.email
+    SELECT sessions.user_id, users.email, users.picture
     FROM sessions JOIN users ON users.id = sessions.user_id
     WHERE sessions.id_hash = ? AND sessions.expires_at > ?
-  `).bind(sessionHash, Date.now()).first<{ user_id: number; email: string | null }>()
-  return row ? { userId: row.user_id, ...(row.email ? { email: row.email } : {}) } : null
+  `).bind(sessionHash, Date.now()).first<{ user_id: number; email: string | null; picture: string | null }>()
+  return row ? { userId: row.user_id, ...(row.email ? { email: row.email } : {}), ...(row.picture ? { picture: row.picture } : {}) } : null
 }
 
 export async function getGoogleCalendarStatus(request: Request, env: Env): Promise<CalendarStatus> {
   const configured = googleCalendarConfigured(env)
   if (!configured) return { configured: false, connected: false }
   const session = await getGoogleSession(request, env)
-  return { configured: true, connected: Boolean(session), ...(session?.email ? { email: session.email } : {}) }
+  return { configured: true, connected: Boolean(session), ...(session?.email ? { email: session.email } : {}), ...(session?.picture ? { picture: session.picture } : {}) }
 }
 
 async function refreshCredential(userId: number, token: StoredToken, env: Env): Promise<StoredToken> {
@@ -414,8 +439,8 @@ async function authenticatedCredential(request: Request, env: Env): Promise<{ se
 function calendarRange(request: Request): { timeMin: string; timeMax: string } {
   const url = new URL(request.url)
   const now = Date.now()
-  const timeMin = url.searchParams.get('timeMin') ?? new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString()
-  const timeMax = url.searchParams.get('timeMax') ?? new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const timeMin = url.searchParams.get('timeMin') ?? new Date(now - 28 * 24 * 60 * 60 * 1000).toISOString()
+  const timeMax = url.searchParams.get('timeMax') ?? new Date(now).toISOString()
   const [minMs, maxMs] = [Date.parse(timeMin), Date.parse(timeMax)]
   if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs || maxMs - minMs > MAX_CALENDAR_RANGE_MS) {
     throw new GoogleCalendarError('invalid_range', '取得期間は31日以内の有効な日時で指定してください。', 400)
@@ -423,22 +448,32 @@ function calendarRange(request: Request): { timeMin: string; timeMax: string } {
   return { timeMin: new Date(minMs).toISOString(), timeMax: new Date(maxMs).toISOString() }
 }
 
-function googleEventUrl(range: { timeMin: string; timeMax: string }): string {
-  const url = new URL(CALENDAR_ENDPOINT)
+// 表示するカレンダー。既定は自分（primary）。共有カレンダーはアクセス権があれば
+// events.readonlyスコープのまま読める
+function requestedCalendarId(request: Request): string {
+  const raw = new URL(request.url).searchParams.get('calendarId')?.trim()
+  if (!raw) return 'primary'
+  if (raw.length > 512) throw new GoogleCalendarError('invalid_calendar_id', 'カレンダーIDが不正です。', 400)
+  return raw
+}
+
+function googleEventUrl(calendarId: string, range: { timeMin: string; timeMax: string }, pageToken?: string): string {
+  const url = new URL(`${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`)
   url.search = new URLSearchParams({
     timeMin: range.timeMin,
     timeMax: range.timeMax,
     singleEvents: 'true',
     orderBy: 'startTime',
     showDeleted: 'false',
-    maxResults: '100',
-    fields: 'items(id,summary,status,start,end,recurringEventId)',
+    maxResults: '250',
+    fields: 'nextPageToken,items(id,summary,status,start,end,recurringEventId)',
   }).toString()
+  if (pageToken) url.searchParams.set('pageToken', pageToken)
   return url.toString()
 }
 
-async function fetchGoogleEvents(accessToken: string, range: { timeMin: string; timeMax: string }): Promise<Response> {
-  return fetch(googleEventUrl(range), {
+async function fetchGoogleEvents(accessToken: string, calendarId: string, range: { timeMin: string; timeMax: string }, pageToken?: string): Promise<Response> {
+  return fetch(googleEventUrl(calendarId, range, pageToken), {
     headers: { Authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(20_000),
   })
@@ -458,28 +493,94 @@ function normalizeEvent(item: z.infer<typeof googleEventSchema>): CalendarEvent 
     start: new Date(startMs).toISOString(),
     end: new Date(endMs).toISOString(),
     durationMinutes: allDay ? 0 : Math.round((endMs - startMs) / 60_000),
-    recurring: Boolean(item.recurringEventId),
+    ...(item.recurringEventId ? { recurringEventId: item.recurringEventId } : {}),
     allDay,
   }
 }
 
 export async function listGoogleCalendarEvents(request: Request, env: Env): Promise<CalendarEventsResponse> {
   const range = calendarRange(request)
+  const calendarId = requestedCalendarId(request)
   let { session, token } = await authenticatedCredential(request, env)
-  let response = await fetchGoogleEvents(token.accessToken, range)
-  if (response.status === 401) {
-    token = await refreshCredential(session.userId, token, env)
-    response = await fetchGoogleEvents(token.accessToken, range)
+  const events: CalendarEvent[] = []
+  let pageToken: string | undefined
+
+  for (let page = 0; page < 10; page += 1) {
+    let response = await fetchGoogleEvents(token.accessToken, calendarId, range, pageToken)
+    if (response.status === 401) {
+      token = await refreshCredential(session.userId, token, env)
+      response = await fetchGoogleEvents(token.accessToken, calendarId, range, pageToken)
+    }
+    if (response.status === 401) throw new GoogleCalendarError('google_not_connected', 'Google Calendarの認証が無効です。再連携してください。', 401)
+    if (response.status === 403) throw new GoogleCalendarError('google_scope_denied', 'Google Calendarの読み取り権限がありません。再連携してください。', 403)
+    if (response.status === 404) throw new GoogleCalendarError('calendar_not_found', 'このカレンダーにアクセスできません。共有設定を確認してください。', 404)
+    if (!response.ok || Number(response.headers.get('content-length') ?? 0) > 1_000_000) {
+      throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarから予定を取得できませんでした。', 502)
+    }
+    const responseText = await response.text()
+    if (responseText.length > 1_000_000) throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarの応答が大きすぎます。', 502)
+    let responseBody: unknown
+    try {
+      responseBody = JSON.parse(responseText)
+    } catch {
+      throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
+    }
+    const parsed = googleEventsSchema.safeParse(responseBody)
+    if (!parsed.success) throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
+    events.push(...(parsed.data.items ?? []).map(normalizeEvent).filter((event): event is CalendarEvent => Boolean(event)))
+    pageToken = parsed.data.nextPageToken
+    if (!pageToken) return { events, range }
   }
-  if (response.status === 401) throw new GoogleCalendarError('google_not_connected', 'Google Calendarの認証が無効です。再連携してください。', 401)
-  if (response.status === 403) throw new GoogleCalendarError('google_scope_denied', 'Google Calendarの読み取り権限がありません。再連携してください。', 403)
-  if (!response.ok || Number(response.headers.get('content-length') ?? 0) > 1_000_000) {
-    throw new GoogleCalendarError('google_calendar_failed', 'Google Calendarから予定を取得できませんでした。', 502)
+
+  throw new GoogleCalendarError('calendar_result_too_large', '過去28日間の予定が多すぎるため、全件を取得できませんでした。期間を短くして再試行してください。', 502)
+}
+
+const googleCalendarListSchema = z.object({
+  items: z.array(z.object({
+    id: z.string().min(1),
+    summary: z.string().optional(),
+    summaryOverride: z.string().optional(),
+    primary: z.boolean().optional(),
+    accessRole: z.string().optional(),
+  }).passthrough()).optional(),
+  nextPageToken: z.string().optional(),
+}).passthrough()
+
+// アクセス可能なカレンダーの一覧（自分＋共有）。calendarlist.readonlyスコープが必要で、
+// 旧接続では403になる（クライアントは再接続を促す）
+export async function listGoogleCalendars(request: Request, env: Env): Promise<CalendarListResponse> {
+  let { session, token } = await authenticatedCredential(request, env)
+  const calendars: CalendarListResponse['calendars'] = []
+  let pageToken: string | undefined
+
+  for (let page = 0; page < 2; page += 1) {
+    const url = new URL(`${CALENDAR_API_BASE}/users/me/calendarList`)
+    url.search = new URLSearchParams({
+      maxResults: '250',
+      minAccessRole: 'reader',
+      fields: 'nextPageToken,items(id,summary,summaryOverride,primary,accessRole)',
+      ...(pageToken ? { pageToken } : {}),
+    }).toString()
+    let response = await fetch(url, { headers: { Authorization: `Bearer ${token.accessToken}` }, signal: AbortSignal.timeout(20_000) })
+    if (response.status === 401) {
+      token = await refreshCredential(session.userId, token, env)
+      response = await fetch(url, { headers: { Authorization: `Bearer ${token.accessToken}` }, signal: AbortSignal.timeout(20_000) })
+    }
+    if (response.status === 401) throw new GoogleCalendarError('google_not_connected', 'Google Calendarの認証が無効です。再連携してください。', 401)
+    if (response.status === 403) throw new GoogleCalendarError('google_scope_denied', 'カレンダー一覧の権限がありません。接続を解除して再接続すると、他のカレンダーを表示できます。', 403)
+    if (!response.ok) throw new GoogleCalendarError('google_calendar_failed', 'カレンダーの一覧を取得できませんでした。', 502)
+    const parsed = googleCalendarListSchema.safeParse(await response.json().catch(() => null))
+    if (!parsed.success) throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
+    for (const item of parsed.data.items ?? []) {
+      const summary = (item.summaryOverride ?? item.summary ?? item.id).trim().slice(0, 500) || item.id.slice(0, 500)
+      if (item.id.length <= 512) calendars.push({ id: item.id, summary, ...(item.primary ? { primary: true } : {}), ...(item.accessRole ? { accessRole: item.accessRole.slice(0, 100) } : {}) })
+    }
+    pageToken = parsed.data.nextPageToken
+    if (!pageToken) break
   }
-  const parsed = googleEventsSchema.safeParse(await response.json())
-  if (!parsed.success) throw new GoogleCalendarError('invalid_calendar_response', 'Google Calendarの応答形式を確認できませんでした。', 502)
-  const events = (parsed.data.items ?? []).map(normalizeEvent).filter((event): event is CalendarEvent => Boolean(event))
-  return { events, range }
+
+  calendars.sort((left, right) => Number(Boolean(right.primary)) - Number(Boolean(left.primary)) || left.summary.localeCompare(right.summary, 'ja'))
+  return { calendars: calendars.slice(0, 250) }
 }
 
 export async function disconnectGoogleCalendar(request: Request, env: Env): Promise<void> {

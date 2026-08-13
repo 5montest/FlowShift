@@ -1,0 +1,203 @@
+import { z } from 'zod'
+import type { CalendarEvent } from './calendar-schema'
+import { workObservationSchema, type WorkObservation } from './design-schema.ts'
+import { userProfileSchema } from './profile-schema.ts'
+
+// 分類の種類はアプリが固定する（AIに種類を発明させない＝週次比較が揺れない）。
+// 既存5値は保存済みデータ・下書きとの互換のため改名しない。
+export const workCategorySchema = z.enum(['会議', '資料作成', 'データ処理', '顧客対応', '開発・制作', '休憩・私用', 'その他'])
+export type WorkCategory = z.infer<typeof workCategorySchema>
+
+// タイトル→分類のAI割り当てAPI（タイトルとプロフィール以外は送らない）
+export const workClassificationRequestSchema = z.object({
+  titles: z.array(z.string().trim().min(1).max(500)).min(1).max(100),
+  profile: userProfileSchema.optional(),
+}).strict()
+
+export const workClassificationResponseSchema = z.object({
+  categories: z.array(z.object({
+    title: z.string().trim().min(1).max(500),
+    category: workCategorySchema,
+  }).strict()).max(100),
+}).strict()
+
+// WorkGroupは観測（WorkObservation）そのもの＋グルーピング情報。
+// 同じ6フィールドを二重定義しない。下書き（session draft）の検証にも使うためschema化している。
+export const workGroupSchema = workObservationSchema.omit({ sourceGroupId: true }).extend({
+  id: z.string().min(1).max(1200),
+  category: workCategorySchema,
+  recurringEventId: z.string().min(1).max(1024).optional(),
+}).strict()
+export type WorkGroup = z.infer<typeof workGroupSchema>
+
+export function toObservation(group: WorkGroup): WorkObservation {
+  return {
+    title: group.title,
+    occurrences: group.occurrences,
+    totalMinutes: group.totalMinutes,
+    averageMinutes: group.averageMinutes,
+    firstOccurredAt: group.firstOccurredAt,
+    lastOccurredAt: group.lastOccurredAt,
+    recurring: group.recurring,
+    sourceGroupId: group.id,
+    ...(group.sourceCalendarName ? { sourceCalendarName: group.sourceCalendarName } : {}),
+  }
+}
+
+// 他カレンダー由来のグループIDは`cal:<encodeURIComponent(calendarId)>|`で名前空間を分ける。
+// 自分のカレンダーは接頭辞なし（既存の下書き・保存済み仮説と互換）。
+// 接頭辞の有無がそのまま「どのカレンダー由来か」の記録になる（sourceGroupIdに透過する）。
+export function calendarGroupKey(calendarId: string): string {
+  return `cal:${encodeURIComponent(calendarId)}|`
+}
+
+// グループid（またはsourceGroupId）からカレンダーidを取り出す。自分のカレンダーはnull
+export function calendarKeyOfGroupId(id: string | undefined): string | null {
+  if (!id?.startsWith('cal:')) return null
+  const separator = id.indexOf('|')
+  if (separator < 0) return null
+  try {
+    return decodeURIComponent(id.slice(4, separator))
+  } catch {
+    return id.slice(4, separator)
+  }
+}
+
+export type DiscoverySummary = {
+  calendarMinutes: number
+  recurringMinutes: number
+  meetingMinutes: number
+  candidateCount: number
+}
+
+export function normalizeWorkTitle(title: string): string {
+  return title.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ja-JP')
+}
+
+// 初期表示とAI分類が使えないときのフォールバック。正確な分類はclassifyWork（LLM）が上書きする。
+export function categorizeWork(title: string): WorkCategory {
+  if (isLikelyPersonal(title)) return '休憩・私用'
+  if (/(会議|定例|ミーティング|朝会|夕会|1on1|面談|打ち合わせ|MTG)/i.test(title)) return '会議'
+  if (/(レポート|報告|資料|提案書)/i.test(title)) return '資料作成'
+  if (/(入力|登録|更新|転記|集計)/i.test(title)) return 'データ処理'
+  if (/(顧客|問い合わせ|フォロー|商談)/i.test(title)) return '顧客対応'
+  if (/(開発|実装|コーディング|coding|設計|デバッグ|テスト|リリース|デプロイ|レビュー|制作|デザイン)/i.test(title)) return '開発・制作'
+  return 'その他'
+}
+
+// 正規化タイトル→分類のmapで、該当するWorkGroupのcategoryだけを差し替える（冪等）
+export function applyCategories(groups: WorkGroup[], categories: Record<string, WorkCategory>): WorkGroup[] {
+  return groups.map((group) => {
+    const category = categories[normalizeWorkTitle(group.title)]
+    return category && category !== group.category ? { ...group, category } : group
+  })
+}
+
+// otherCalendar指定時（共有カレンダーの分析）はIDへ名前空間接頭辞を付け、表示名を各グループに刻む
+export function groupCalendarEvents(events: CalendarEvent[], otherCalendar?: { id: string; name: string }): WorkGroup[] {
+  const grouped = new Map<string, CalendarEvent[]>()
+  const prefix = otherCalendar ? calendarGroupKey(otherCalendar.id) : ''
+
+  for (const event of events) {
+    if (event.allDay || event.durationMinutes <= 0) continue
+    const key = prefix + (event.recurringEventId
+      ? `recurring:${event.recurringEventId}`
+      : `title:${normalizeWorkTitle(event.title)}`)
+    const current = grouped.get(key) ?? []
+    current.push(event)
+    grouped.set(key, current)
+  }
+
+  return [...grouped.entries()].map(([id, occurrences]) => {
+    const ordered = [...occurrences].sort((left, right) => Date.parse(left.start) - Date.parse(right.start))
+    const totalMinutes = ordered.reduce((total, event) => total + event.durationMinutes, 0)
+    const recurringEventId = ordered.find((event) => event.recurringEventId)?.recurringEventId
+    return {
+      id,
+      title: ordered[0].title,
+      occurrences: ordered.length,
+      totalMinutes,
+      averageMinutes: Math.round(totalMinutes / ordered.length),
+      firstOccurredAt: ordered[0].start,
+      lastOccurredAt: ordered.at(-1)?.start ?? ordered[0].start,
+      ...(recurringEventId ? { recurringEventId } : {}),
+      recurring: Boolean(recurringEventId),
+      category: categorizeWork(ordered[0].title),
+      ...(otherCalendar ? { sourceCalendarName: otherCalendar.name } : {}),
+    }
+  }).sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
+}
+
+// カレンダー由来と手動登録のWorkGroupを1つの一覧に合流させる。
+// 正規化タイトルが衝突したらカレンダー側が勝つ（実測優先・二重計上防止）。
+export function mergeWorkGroups(calendarGroups: WorkGroup[], manualGroups: WorkGroup[]): WorkGroup[] {
+  const calendarTitles = new Set(calendarGroups.map((group) => normalizeWorkTitle(group.title)))
+  const merged = [...calendarGroups, ...manualGroups.filter((group) => !calendarTitles.has(normalizeWorkTitle(group.title)))]
+  return merged.sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
+}
+
+export function isDiscoveryCandidate(group: WorkGroup): boolean {
+  return group.occurrences >= 2 || group.totalMinutes >= 60 || ['資料作成', 'データ処理'].includes(group.category)
+}
+
+// タイトルから明らかに業務でない予定（休憩・食事・休暇・私用・移動など）を見分ける。
+// 声かけの対象から外すためだけに使い、一覧や内訳からは消さない。
+export function isLikelyPersonal(title: string): boolean {
+  return /(休憩|昼休|ランチ|lunch|朝食|昼食|夕食|食事|休暇|有休|有給|私用|通院|健診|検診|病院|歯医者|美容院|ジム|移動|送迎|不在|外出|ブロック)/i.test(title)
+}
+
+// 声かけ（アプリから先に話しかける）対象の選定。
+// isDiscoveryCandidateはほぼ全件を通すため、ここではより強い条件で絞り込む：
+// ①除外タイトル（保存済みプロジェクト・ユーザーが対象外にしたもの等）と業務でない予定を外す
+// ②繰り返しが対象（定例3回以上、または2回以上かつ合計2時間以上。単発は選ばない）
+// ③1人で完結しやすい資料作成・データ処理を優先し、同点は合計時間の多い順。
+export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iterable<string> = []): WorkGroup[] {
+  const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
+  const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
+    && !isLikelyPersonal(group.title)
+    // 非公開予定はタイトルが取れず「予定」に集約され巨大グループ化するため声かけしない
+    && normalizeWorkTitle(group.title) !== '予定'
+    && group.category !== '休憩・私用'
+    && ((group.occurrences >= 3 && group.recurring) || (group.occurrences >= 2 && group.totalMinutes >= 120)))
+  const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)
+  return [...eligible].sort((left, right) => soloFriendly(right) - soloFriendly(left)
+    || right.totalMinutes - left.totalMinutes
+    || right.occurrences - left.occurrences)
+}
+
+export type WorkReduction = {
+  // 直近4週間のカレンダーに同じ業務が見つかったか。見つからない場合、
+  // 「全削減」と「タイトル変更・休暇などで照合できない」を区別できないため、
+  // 削減量として断定しない（UI側は「見当たりません」と表示する）。
+  matched: boolean
+  baselineOccurrences: number
+  baselineMinutes: number
+  currentOccurrences: number
+  currentMinutes: number
+  deltaMinutes: number
+}
+
+// 採用した仮説の「どのくらい減ったか」。保存時点の観測値と、直近4週間の同じ業務
+// （出所グループid、無ければ正規化タイトル）を突き合わせる。
+export function computeReduction(baseline: { title: string; occurrences: number; totalMinutes: number; sourceGroupId?: string }, currentGroups: WorkGroup[]): WorkReduction {
+  const key = normalizeWorkTitle(baseline.title)
+  const current = (baseline.sourceGroupId ? currentGroups.find((group) => group.id === baseline.sourceGroupId) : undefined)
+    ?? currentGroups.find((group) => normalizeWorkTitle(group.title) === key)
+  return {
+    matched: Boolean(current),
+    baselineOccurrences: baseline.occurrences,
+    baselineMinutes: baseline.totalMinutes,
+    currentOccurrences: current?.occurrences ?? 0,
+    currentMinutes: current?.totalMinutes ?? 0,
+    deltaMinutes: baseline.totalMinutes - (current?.totalMinutes ?? 0),
+  }
+}
+
+export function summarizeWorkGroups(groups: WorkGroup[]): DiscoverySummary {
+  return {
+    calendarMinutes: groups.reduce((total, group) => total + group.totalMinutes, 0),
+    recurringMinutes: groups.filter((group) => group.recurring).reduce((total, group) => total + group.totalMinutes, 0),
+    meetingMinutes: groups.filter((group) => group.category === '会議').reduce((total, group) => total + group.totalMinutes, 0),
+    candidateCount: groups.filter(isDiscoveryCandidate).length,
+  }
+}

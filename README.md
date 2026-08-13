@@ -1,28 +1,54 @@
 # FlowShift
 
-予定から繰り返し業務を見つけ、現在の作業をそのまま自動化するのではなく、目的と人の判断から業務を再設計するWebアプリです。
+FlowShiftは、本人が持つ業務知識を質問で引き出し、構造化し、AI時代の別の設計可能性を検証するためのAX設計支援ツールです。
 
-Google Calendarの読み取り、DeepSeek V4 Flashによるヒアリング候補・業務モデル・改善案の生成まで実装しています。
+「何かRPAにしたい仕事はありますか？」と聞かれても現場は答えられません。だからFlowShiftが先に話しかけます。
+
+```text
+過去4週間のカレンダーを見ると、
+売上レポート作成を4回（合計3時間）行っています。
+まず「売上レポート作成」について、実際には何をしているか教えてください。
+```
+
+```text
+声かけ（発見） → 質問に答える（理解） → 内容を確認 → 再設計仮説 → 検証 → 人が判断
+```
+
+Google Calendarは業務を理解するデータではなく、質問を始める索引として使います。予定の頻度だけから、業務の廃止や自動化を断定しません。
 
 ## 実装済み
 
-- Google OAuth 2.0 Authorization Code + PKCE
-- Google Calendarの予定一覧取得（タイトル、開始・終了、繰り返し情報のみ）
-- 候補を1件選んでからDeepSeekへ送るデータ最小化
-- D1のユーザー、暗号化OAuthトークン、ハッシュ化セッション保存
-- 読み取り専用Calendar scopeと接続解除時のToken revoke
-- 選択式ヒアリング、BusinessTask確認、目的からの業務再設計
+- 過去28日分のCalendar取得、ページネーション、定例予定IDの保持
+- 定例予定IDと正規化タイトルによる決定論的なWorkGroup集約
+- カレンダーに載らない業務の手動登録（＋業務を追加。ブラウザ内保存、同名のカレンダー実測が優先）
+- 共有カレンダーの切り替え分析（アクセス可能な他人のカレンダーでもフルフロー。回答は閲覧者の理解として扱い、検証計画に本人確認を必須化。仮説一覧・削減トラッキングはカレンダーごとに分離）
+- 固定7分類（会議／資料作成／データ処理／顧客対応／開発・制作／休憩・私用／その他）へのAI割り当て（regexフォールバック・ブラウザキャッシュ付き）
+- ワークスペース最上部の「声かけ」：繰り返し業務を選定し、アプリから質問を始める（質問は表示中に先読み）
+- 選択式の質問カード（意味を機械的に保持）と自由入力のエスケープ
+- 整理しながら進む連続インタビュー（最大9問。追加質問の生成待ちは決定論カタログのつなぎ質問で埋め、キューが空になるたびに再整理。いつでも中断して仮説へ進める）
+- 回答途中の自動下書き（業務ごとに複数並行、いつでも中断・再開。ブラウザ内にのみ保存）
+- 回答のたびに決定論で更新される業務モデル（確認済み・一部確認・未確認）
+- 追加質問とLLM整理は確認画面の裏で非同期実行（ブロッキングのAI待ちは仮説生成の1回だけ）
+- Facts / Assumptions / Unknownsを分離した条件付き再設計仮説（段階表示）
+- 改善の検討梯子：廃止→簡素化→オンデマンド化→ルール自動化→AI支援→AI委譲の順に問い、各段の判断と理由を仮説画面に表示（AIから検討を始めない）
+- 誤りの影響が大きいと回答された業務には、AI単独実行（AI委譲）を提案しない決定論ガード
+- 検証ノート：未確認事項への回答、仮説更新、採用・保留・却下・削除
+- 回答の修正（回答済みの内容はどこからでも上書きできる）
+- 採用した仮説の削減トラッキング（保存時点と直近4週間のカレンダー実測の比較、回数と合計時間、全体合計）
+- 業務の読み取り専用詳細パネル（内訳から回数・時間・下書き/仮説の有無を確認してから答える）
+- ユーザーが確認した改善プロジェクトだけをD1へ保存
+- Google OAuth、暗号化トークン、ハッシュ化セッション
 - Cloudflare Workers、Hono、React、Vite、Zod
 
 ## ローカル起動
 
 必要環境はNode.js 22以降です。
 
-1. `apikey.txt` にDeepSeek APIキーを1行で保存します。
+1. `apikey.txt` にAI APIキーを1行で保存します。
 2. Google CloudでGoogle Calendar APIを有効化します。
-3. OAuth同意画面を設定し、「ウェブ アプリケーション」のOAuthクライアントを作成します。
-4. 承認済みリダイレクトURIに `http://localhost:5173/api/google/callback` を完全一致で登録します。
-5. ダウンロードした認証情報JSONをプロジェクト直下へ `google-oauth.json` という名前で保存します。
+3. OAuth同意画面を設定し、ウェブアプリケーションのOAuthクライアントを作成します。
+4. 承認済みリダイレクトURIへ `http://localhost:5173/api/google/callback` を登録します。
+5. 認証情報JSONをプロジェクト直下へ `google-oauth.json` として保存します。
 6. 起動します。
 
 ```powershell
@@ -30,80 +56,62 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-`predev` が次を自動で行います。
-
-- `apikey.txt` と `google-oauth.json` からGit対象外の `.dev.vars` を生成
-- 初回だけ `token-encryption-key.txt` を生成
-- ローカルD1へ `migrations/` を適用
-
-Google認証情報がない場合もデモモードとDeepSeek連携は利用できます。Google連携ボタンは、設定不足が分かる無効状態になります。
+`predev`がローカル用secretを生成し、D1 migrationを適用します。
 
 ## データの扱い
 
-- Calendar scopeは `calendar.events.readonly` です。
-- 一覧取得時は、予定のタイトル、開始・終了時刻、繰り返し情報だけをGoogleへ要求します。
-- DeepSeekへ送るのは、ユーザーが選択した予定のタイトル・所要時間とヒアリング回答だけです。
-- Calendar予定と分析結果は保存しません。
+- Calendar scopeは `calendar.events.readonly` と `calendar.calendarlist.readonly`（アクセス可能なカレンダーの一覧）です。あわせて `openid email profile` を要求し、メールアドレスとプロフィール画像URLをログイン表示のために保存します。
+- 共有カレンダーを選択した場合、そのカレンダーの予定タイトルも業務分類・質問生成のため外部AIサービスへ送信されます。回答は閲覧者の理解として扱われ、仮説の検証計画には本人への確認が含まれます。
+- 過去28日のタイトル、開始・終了、定例予定IDだけを取得します。
+- 外部AIサービスへ送るのは、選択したWorkGroupの観測情報とヒアリング回答、および業務分類のための予定タイトルです（予定の本文・参加者は取得していません）。分類結果はブラウザにキャッシュされ、同じタイトルは再送信されません。
+- Calendar全件は保存しません。サーバー（D1）に残すのは、ユーザーが確認して保存した業務モデル・回答（answerEvidence）・仮説・検証計画だけです。
+- 回答途中のセッションはブラウザのlocalStorageにのみ下書き保存します。サーバーへは送信せず、仮説の保存・明示的な破棄・30日経過で削除されます。
+- 手動登録した業務もブラウザのlocalStorageにのみ保存します（サーバーへは送信しません。分類・質問生成の際はタイトル等がAIへ送信されます）。
+- 保存するのは、ユーザーが確認した業務モデル、再設計仮説、検証計画、判断状態、および任意で設定したプロフィール（職種・役職・勤務形態）です。プロフィールは質問生成・分類・仮説生成の精度向上のため、分析時にAIへ送信されます。
 - Google Refresh TokenはAES-GCMで暗号化してD1へ保存します。
 - ブラウザにはランダムなセッションIDだけをHttpOnly / SameSite=Lax cookieとして保存します。
-- 接続解除時はGoogle Tokenをrevokeし、D1の認証情報とセッションを削除します。
 
 ## 検証
 
 ```powershell
-# 型検査、production build、secret混入検査
+npm.cmd run check        # 決定論ロジックの回帰テスト（WorkGroup・回答忠実性・プロジェクトv1→v2・業務分解）
 npm.cmd run build
-
-# dev起動中のCalendar認証ガードとDeepSeek実API疎通
-npm.cmd run smoke
-
-# Cloudflareへのアップロード内容をdry-run
+npm.cmd run smoke:http   # devサーバー起動中に。認証境界とOriginの検査（AIキー不要）
+npm.cmd run smoke        # devサーバー起動中に。実LLM込みの通し検査
+npm.cmd run secret:check
 npm.cmd run cf:dry-run
 ```
 
-`build` は `.dev.vars` を削除してから成果物を作り、ローカルのAPIキー、Google OAuth secret、Token暗号鍵が `dist/` に含まれないことを検査します。次回の `dev` で `.dev.vars` は再生成されます。
-
-## Cloudflare本番設定
-
-本番用OAuthクライアントには、実際のオリジンを使った `https://<your-domain>/api/google/callback` を登録してください。次の値はファイルや `wrangler.jsonc` へ書かず、Cloudflare secretとして設定します。
-
-```powershell
-npx.cmd wrangler secret put DEEPSEEK_API_KEY
-npx.cmd wrangler secret put GOOGLE_CLIENT_ID
-npx.cmd wrangler secret put GOOGLE_CLIENT_SECRET
-npx.cmd wrangler secret put TOKEN_ENCRYPTION_KEY
-```
-
-`TOKEN_ENCRYPTION_KEY` には32バイト以上のランダム値を使います。D1を本番環境へプロビジョニングし、公開前に次を実行します。
-
-```powershell
-npm.cmd run db:migrate:remote
-npm.cmd run deploy
-```
-
-OAuth同意画面がTestingの場合はテストユーザーを登録してください。一般公開時は、Googleの審査要件も確認してください。
+`build`はローカルsecretを削除してから成果物を作り、secretが`dist/`へ混入していないことを検査します。次回の`dev`でローカル用secretは再生成されます。
 
 ## CI/CD
 
-`.github/workflows/ci-cd.yml` がPull Requestで型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。GitHubの`production` environmentに次を設定してください。
+`.github/workflows/ci-cd.yml`はPull Requestで回帰テスト（`npm run check`）・型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。
+
+GitHubの`production` environmentには次だけを設定します。
 
 - Environment variable `CLOUDFLARE_ACCOUNT_ID`
 - Environment secret `CLOUDFLARE_API_TOKEN`
 
-API tokenはCloudflareの「Edit Cloudflare Workers」テンプレートを使い、対象アカウントと`atto-hub.com`だけへ権限を絞ります。アプリのAPIキーやOAuth secretはCloudflare Workers側に保存したままなので、GitHubへ登録する必要はありません。
+アプリのAPIキー、OAuth secret、暗号鍵はCloudflare Workers側で管理し、GitHubへ保存しません。
 
 ## 構成
 
 ```text
-migrations/                 D1 schema
-shared/calendar-schema.ts   Calendar APIの共有schema
-shared/design-schema.ts     業務設計の共有schema
-src/App.tsx                 画面と接続・選択フロー
-src/api.ts                  ブラウザからWorker APIへの通信
-worker/google-calendar.ts   OAuth、暗号化Token、Calendar取得
-worker/deepseek.ts          DeepSeek呼び出しと出力検証
-worker/index.ts             Hono routesと認証ガード
-wrangler.jsonc              Worker、D1、secret設定
+migrations/                  D1 schema
+shared/calendar-schema.ts    Calendar API schema
+shared/work-group.ts         WorkGroup集約・声かけ候補の選定・削減の計算
+shared/design-schema.ts      業務コンテクスト・仮説・検証schema（文脈次元が唯一の定義）
+shared/project-schema.ts     改善プロジェクトschema（v1→v2読み時アップグレード含む）
+shared/context-questions.ts  決定論的な質問カタログ（フォールバック・情報追加）
+shared/interview.ts          回答meaningを正本とする決定論的な構造化
+shared/demo-fixtures.ts      チェックスクリプト用フィクスチャ
+src/App.tsx                  状態シェル（セッションflow・先読みキャッシュ）
+src/screens/                 connect / workspace / session / hypothesis / note の5画面
+src/components/              QuestionCard・WorkDecomposition など共有部品
+src/api.ts                   ブラウザからWorker APIへの通信
+worker/deepseek.ts           LLM呼び出し（プロンプト形式はZodから生成）
+worker/google-calendar.ts    OAuth、暗号化Token、Calendar取得
+worker/index.ts              API routes（テーブル駆動AIルート・統合PATCH）
+wrangler.jsonc               Worker、D1、secret設定
 ```
-
-詳細なコンセプトとセキュリティ要件は `AI-Native Business Designer_v1.2.md` を参照してください。

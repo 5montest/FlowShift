@@ -1,7 +1,7 @@
-import type { WorkflowStep } from './types'
+import type { WorkflowStepInput } from '../../shared/design-schema'
 
 type Props = {
-  steps: WorkflowStep[]
+  steps: WorkflowStepInput[]
   ariaLabel: string
 }
 
@@ -17,7 +17,7 @@ export default function WorkflowDiagram({ steps, ariaLabel }: Props) {
   return (
     <ol className="workflow-list" aria-label={ariaLabel}>
       {steps.map((step, index) => (
-        <li key={step.id} className={`workflow-step workflow-step-${step.kind}`}>
+        <li key={`${index}-${step.label}`} className={`workflow-step workflow-step-${step.kind}`}>
           <span className="workflow-number">{index + 1}</span>
           <div><small>{kindLabel[step.kind]}</small><strong>{step.label}</strong><p>{step.detail}</p></div>
         </li>
