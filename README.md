@@ -55,7 +55,7 @@ npm.cmd run dev
 
 ## データの扱い
 
-- Calendar scopeは `calendar.events.readonly` です。
+- Calendar scopeは `calendar.events.readonly` です。あわせて `openid email profile` を要求し、メールアドレスとプロフィール画像URLをログイン表示のために保存します。
 - 過去28日のタイトル、開始・終了、定例予定IDだけを取得します。
 - 外部AIサービスへ送るのは、選択したWorkGroupの観測情報とヒアリング回答、および業務分類のための予定タイトルです（予定の本文・参加者は取得していません）。分類結果はブラウザにキャッシュされ、同じタイトルは再送信されません。
 - Calendar全件は保存しません。サーバー（D1）に残すのは、ユーザーが確認して保存した業務モデル・回答（answerEvidence）・仮説・検証計画だけです。

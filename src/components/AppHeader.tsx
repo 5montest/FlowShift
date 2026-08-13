@@ -11,10 +11,11 @@ function Logo() {
   return <span className="wordmark"><i aria-hidden="true">F</i><b>FlowShift</b></span>
 }
 
-export default function AppHeader({ screen, canRestart, email, onBack, onHome, onRestart, onOpenProfile }: {
+export default function AppHeader({ screen, canRestart, email, picture, onBack, onHome, onRestart, onOpenProfile }: {
   screen: Screen
   canRestart: boolean
   email?: string
+  picture?: string
   onBack: () => void
   onHome: () => void
   onRestart: () => void
@@ -32,7 +33,8 @@ export default function AppHeader({ screen, canRestart, email, onBack, onHome, o
           </>
         )}
         {screen !== 'connect' && <details className="header-menu"><summary aria-label={email ? `アカウントメニュー（${email}）` : 'メニュー'} title={email}>
-          {email ? <span className="account-chip" aria-hidden="true">{email[0].toUpperCase()}</span> : <Menu size={22} />}
+          {picture ? <img className="account-chip" src={picture} alt="" referrerPolicy="no-referrer" />
+            : email ? <span className="account-chip" aria-hidden="true">{email[0].toUpperCase()}</span> : <Menu size={22} />}
         </summary><div>
           {email && <p className="menu-account"><UserRound size={16} />{email}</p>}
           {email && onOpenProfile && <button type="button" onClick={onOpenProfile}>プロフィール設定</button>}

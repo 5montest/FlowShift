@@ -49,6 +49,7 @@ summary:focus-visible {
 .header-back:hover { background: var(--fs-color-surface-subtle); }
 .header-location { margin-right: auto; overflow: hidden; font-size: var(--fs-type-body-size); text-overflow: ellipsis; white-space: nowrap; }
 .account-chip { display: inline-grid; width: 32px; height: 32px; place-items: center; color: var(--fs-color-highlight); border-radius: 50%; background: var(--fs-color-inverse-surface); font-size: var(--fs-type-dense-size); font-weight: 900; }
+img.account-chip { object-fit: cover; }
 .menu-account { display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px 12px; color: var(--fs-color-text-muted); border-bottom: 1px solid var(--fs-color-border); font-size: var(--fs-type-dense-size); overflow-wrap: anywhere; }
 
 /* Profile dialog form */

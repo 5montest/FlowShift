@@ -53,6 +53,7 @@ const jwtPayloadSchema = z.object({
   azp: z.string().optional(),
   sub: z.string().min(1).max(255),
   email: z.string().email().optional(),
+  picture: z.string().url().max(1024).optional(),
   exp: z.number().int().positive(),
   iat: z.number().int().positive(),
 }).passthrough()
@@ -83,7 +84,7 @@ const googleEventsSchema = z.object({
 }).passthrough()
 
 type StoredToken = z.infer<typeof storedTokenSchema>
-type Session = { userId: number; email?: string }
+type Session = { userId: number; email?: string; picture?: string }
 type CredentialRow = { token_ciphertext: string; token_iv: string; key_version: string }
 
 export class GoogleCalendarError extends Error {
@@ -203,7 +204,7 @@ export async function createGoogleAuthorization(request: Request, env: Env): Pro
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri(request),
     response_type: 'code',
-    scope: `openid email ${CALENDAR_SCOPE}`,
+    scope: `openid email profile ${CALENDAR_SCOPE}`,
     access_type: 'offline',
     include_granted_scopes: 'true',
     prompt: 'consent',
@@ -333,10 +334,10 @@ export async function finishGoogleAuthorization(request: Request, env: Env): Pro
   const identity = await verifyGoogleIdToken(tokenResult.data.id_token, env.GOOGLE_CLIENT_ID)
   const now = Date.now()
   await env.DB.prepare(`
-    INSERT INTO users (google_sub, email, created_at, updated_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, updated_at = excluded.updated_at
-  `).bind(identity.sub, identity.email ?? null, now, now).run()
+    INSERT INTO users (google_sub, email, picture, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, picture = excluded.picture, updated_at = excluded.updated_at
+  `).bind(identity.sub, identity.email ?? null, identity.picture ?? null, now, now).run()
   const user = await env.DB.prepare('SELECT id FROM users WHERE google_sub = ?').bind(identity.sub).first<{ id: number }>()
   if (!user) throw new GoogleCalendarError('database_error', 'Googleユーザーを保存できませんでした。', 500)
 
@@ -369,18 +370,18 @@ export async function getGoogleSession(request: Request, env: Env): Promise<Sess
   if (!sessionToken) return null
   const sessionHash = encodeBase64Url(await sha256(sessionToken))
   const row = await env.DB.prepare(`
-    SELECT sessions.user_id, users.email
+    SELECT sessions.user_id, users.email, users.picture
     FROM sessions JOIN users ON users.id = sessions.user_id
     WHERE sessions.id_hash = ? AND sessions.expires_at > ?
-  `).bind(sessionHash, Date.now()).first<{ user_id: number; email: string | null }>()
-  return row ? { userId: row.user_id, ...(row.email ? { email: row.email } : {}) } : null
+  `).bind(sessionHash, Date.now()).first<{ user_id: number; email: string | null; picture: string | null }>()
+  return row ? { userId: row.user_id, ...(row.email ? { email: row.email } : {}), ...(row.picture ? { picture: row.picture } : {}) } : null
 }
 
 export async function getGoogleCalendarStatus(request: Request, env: Env): Promise<CalendarStatus> {
   const configured = googleCalendarConfigured(env)
   if (!configured) return { configured: false, connected: false }
   const session = await getGoogleSession(request, env)
-  return { configured: true, connected: Boolean(session), ...(session?.email ? { email: session.email } : {}) }
+  return { configured: true, connected: Boolean(session), ...(session?.email ? { email: session.email } : {}), ...(session?.picture ? { picture: session.picture } : {}) }
 }
 
 async function refreshCredential(userId: number, token: StoredToken, env: Env): Promise<StoredToken> {

@@ -4,6 +4,7 @@ export const calendarStatusSchema = z.object({
   configured: z.boolean(),
   connected: z.boolean(),
   email: z.string().email().optional(),
+  picture: z.string().url().max(1024).optional(),
 }).strict()
 
 export const calendarEventSchema = z.object({
