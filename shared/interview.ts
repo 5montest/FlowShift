@@ -70,6 +70,9 @@ export function finalizeBusinessTask(observed: WorkObservation, answers: Intervi
     ...draft,
     observed,
     answerEvidence: answers,
+    // 誤りの影響（失敗コスト）はrisks次元の回答meaningだけを正本にする（他次元の選択肢に
+    // LLMが付けたfailureCostは、ユーザーがリスクに答えた事実ではないため無視する）
+    failureCost: answers.filter((answer) => answer.dimension === 'risks' && answer.meaning?.failureCost).at(-1)?.meaning?.failureCost ?? 'UNKNOWN',
     // 構造化された役割回答がある場合は、その明示的な意味だけを正本にする。
     // LLMが同義語で「ない」と答えた役割を復活させる余地を残さない。
     businessRoles: roleSignals.size

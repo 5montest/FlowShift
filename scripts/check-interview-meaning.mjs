@@ -91,6 +91,18 @@ const concreteStakeholders = finalizeBusinessTask(observation, [concreteStakehol
 assert.equal(concreteStakeholders.contextStatus.stakeholders, 'CONFIRMED')
 assert.deepEqual(concreteStakeholders.stakeholders, ['チームメンバー', 'チーム責任者'])
 
+// 失敗コスト（誤りの影響）はrisks回答のmeaningから決定論で設定される。未回答はUNKNOWN
+assert.equal(task.failureCost, 'UNKNOWN')
+const highRiskAnswer = {
+  questionId: 'context-risks', dimension: 'risks', question: 'この業務を変えるとき、最も避けたいことは何ですか？',
+  answer: '重要な変更・異常の見逃し', source: 'OPTION', optionId: 'risk-miss',
+  meaning: { roles: [], contextState: 'CONFIRMED', failureCost: 'HIGH' },
+}
+assert.equal(finalizeBusinessTask(observation, [consultationAnswer, highRiskAnswer], contradictoryDraft).failureCost, 'HIGH')
+const lowRiskAnswer = { ...highRiskAnswer, optionId: 'risk-none', answer: '変えても大きな影響はない', meaning: { roles: [], contextState: 'CONFIRMED', failureCost: 'LOW' } }
+assert.equal(finalizeBusinessTask(observation, [consultationAnswer, lowRiskAnswer], contradictoryDraft).failureCost, 'LOW')
+assert.equal(finalizeBusinessTask(observation, [highRiskAnswer, lowRiskAnswer], contradictoryDraft).failureCost, 'LOW', 'latest answer wins')
+
 // 目的文のスタイルガード：ユーザーの語彙に含まれる成果物名は許可し、含まれなければ拒否する。
 // 保存データ検証（businessTaskSchema）には語のガードを掛けない（読み込みで落とさない）。
 const mailPurposeDraft = { ...contradictoryDraft, purpose: '顧客からの問い合わせメールに漏れなく答え、対応状況を把握する' }

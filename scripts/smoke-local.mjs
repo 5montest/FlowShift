@@ -132,7 +132,12 @@ const designResult = await designResponse.json()
 assert.equal(designResponse.status, 200, `Business redesign generation failed: ${JSON.stringify(designResult)}`)
 assert.equal(designResult.design?.analysis?.readiness, 'NEEDS_CONTEXT')
 // 判断保留でも具体案は描く（KEEPへ逃げない）。ELIMINATEだけはsuperRefineが禁じている
-assert.ok(['AUTOMATE', 'ON_DEMAND', 'KEEP'].includes(designResult.design?.redesign?.strategy), `unexpected strategy: ${designResult.design?.redesign?.strategy}`)
+const strategy = designResult.design?.redesign?.strategy
+assert.ok(['SIMPLIFY', 'ON_DEMAND', 'AUTOMATE', 'AI_ASSIST', 'AI_DELEGATE', 'KEEP'].includes(strategy), `unexpected strategy: ${strategy}`)
+// 検討の梯子のトレースが必須で、選んだ段がADOPTEDで含まれる
+const ladder = designResult.design?.redesign?.ladder
+assert.ok(Array.isArray(ladder) && ladder.length >= 1, 'ladder trace is required')
+assert.ok(ladder.some((step) => step.verdict === 'ADOPTED' && step.rung === strategy), 'ladder must adopt the chosen strategy')
 const confirmedRoleName = consultationOption.meaning.roles.find((role) => role.present).name
 const roleRegex = new RegExp(confirmedRoleName)
 assert.ok(

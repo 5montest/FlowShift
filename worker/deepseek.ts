@@ -159,6 +159,7 @@ phaseはFOLLOW_UP、質問数は0〜4問です。確認済みの内容を聞き�
 contextStatusでconstraints・dependencies・risksがUNKNOWNのものは採用判断を止める最重要事項です。UNKNOWNが残っていれば、その次元の質問を必ず1問以上含めてください。
 各質問には3〜6個の選択肢を付けます。「情報がある／ない」ではなく内容を聞いてください。関係者は具体的な対象をmeaning.stakeholders、現在工程は具体的な行為をmeaning.processItemsへ保存し、複数該当する質問はselectionをMULTIPLEにします。役割はmeaning.rolesへ具体名、present、scope（ALL | PARTIAL | CONDITIONAL | UNKNOWN）、必要ならscopeDetailを保存します。「まだ分からない」はcontextStateをUNKNOWNにします。
 存在だけ分かって具体的な対象が分からない場合、その項目をCONFIRMEDにしないでください。
+リスク（dimension=risks）の選択肢には、誤りの影響の大きさをmeaning.failureCost（HIGH / LOW）で付けてください。他の次元にはfailureCostを付けません。
 phaseは常にFOLLOW_UP、質問idはfollowup-trainingのような一意な英数字です。
 ${schemaInstruction(interviewPlanSchema)}`
 
@@ -176,19 +177,26 @@ function designPromptFor(task: BusinessTask): string {
     ...(task.deliveryModel.currentFormat === 'REQUIRED' ? [
       '- 現在の形式を維持する前提で、metricsのafter側も現在の役割の維持を反映する。',
     ] : []),
+    ...(task.failureCost === 'HIGH' ? [
+      '- 誤りの影響が大きいと回答済み。AI単独実行（AI_DELEGATE）を提案せず、人の確認を挟む構成にする。',
+    ] : []),
   ]
   return `あなたはFlowShiftの業務再設計パートナーです。目的は改善案を断定することではなく、ユーザーが確認したBusinessTaskから別の設計可能性と検証方法を提示することです。
 次の原則を厳守してください。
 - AIは最終判断者ではない。Calendar情報だけで廃止・自動化を断定しない。
 - businessTask.answerEvidenceの原文とmeaningはユーザー回答の正本であり、別の意味へ解釈し直さない。businessRolesにある役割を「未確認」と書かない。
 - factsは観測事実と回答済み事項だけ。成立条件はassumptions、判断前の不足情報はunknownsへ分ける。
-- readiness（採用判断できるか）とredesign（案の具体性）は別物。constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXTにするが、redesignはreadinessに関わらず最も価値のある具体案を描く。strategyは案の実体（AUTOMATE・ON_DEMAND・ELIMINATE・KEEP）で選び、未確認を理由にKEEPへ逃げない。
+- readiness（採用判断できるか）とredesign（案の具体性）は別物。constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXTにするが、redesignはreadinessに関わらず最も価値のある具体案を描く。未確認を理由にKEEPへ逃げない。
+- strategyは次の梯子を上から順に問い、最初に成立した段を選ぶ。AI（⑤⑥）から検討を始めない。①ELIMINATE：そもそもこの業務・成果物を不要にできるか ②SIMPLIFY：頻度・手順・承認・転記を減らせるか ③ON_DEMAND：定期実行を必要時だけにできるか ④AUTOMATE：条件を明文化できる処理をルール・API連携で自動化できるか ⑤AI_ASSIST：曖昧・非構造の処理をAIが下書きし人が確認する形にできるか ⑥AI_DELEGATE：高頻度で誤りをすぐ検知でき影響が小さい処理をAI単独実行にできるか ⑦KEEP：どれも成立しない。
+- 検討した各段をredesign.ladderへ採用段まで記録する。verdictはADOPTED（採用）・REJECTED（成立しない）・DEFERRED（未確認情報のせいで判断できない）で、reasonは1行。DEFERREDにした理由はcriticalUnknownsまたはvalidationPlanの項目と対応させる。
 - conclusionは3文以内。NEEDS_CONTEXTでは「何が確認できれば採用判断できるか」を示し、案が無いかのような書き方をしない。
 - headlineは変更案を手段込みの1文（全角60字以内目安）で書く。例：「Kintone APIでの自動抽出とスプレッドシートへの自動反映に置き換える」。workflowとmetricsのafter側はheadlineの案と一致させる。「現状維持」と書くのはstrategyがKEEPのときだけ。
 - hypothesisは「〜が確認できれば、〜へ変更できる」という条件付きの前向き表現にし、全角200字以内に収める。
 - assumptionsとunknownsは仮説の成否に関わるものだけを各5件以内。unknownsにvalidationPlan.itemsの言い換えを繰り返さない。
 - 「この作業をAIで速くする」より「そもそもこの作業・成果物は必要か」を先に検討する。ただし不要と確認されていないものを消さない。
 - systemは決定論的な取得・通知、aiは意味整理・候補提示、人は確認・判断を担当する。
+- roles.humanの各項目は「最終確認」のような抽象語で終わらせず、何を・どの観点で確認するかまで書く（人がAIの誤りを実際に見つけられる設計にする）。
+- workflowにaiまたはsystemの工程がある場合、validationPlanに「人がAI・システムの誤りにどう気づくか」を確かめる項目を必ず1件含める。
 - 時間は入力頻度を変換せず、根拠のない年間換算や精密値を作らない。
 - metricsは意味のある比較だけを書く。この業務で変化しない・該当しない行はbefore/afterともキーごと省略する。
 - validationPlanは固定期間にせず、案に応じてPILOT、TECHNICAL_FEASIBILITY、OFFLINE_EVALUATION、REQUIREMENT_VALIDATION、STAKEHOLDER_REVIEWから必要な方法だけを選ぶ。
@@ -251,10 +259,22 @@ function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput
     ? `確認済みの役割（${roleLabels.join('・')}）は、その範囲を変えずに残します。`
     : undefined
 
+  // 決定論の強制がstrategyを変えるとき、検討の梯子（ladder）のトレースも整合させる。
+  // 旧ADOPTED段はREJECTED（強制理由つき）へ、強制した段はADOPTEDへ書き換える
+  const reconcileLadder = (forced: DesignOutput['redesign']['strategy'], reason: string): NonNullable<DesignOutput['redesign']['ladder']> => {
+    const steps = (design.redesign.ladder ?? []).map((step) => step.verdict === 'ADOPTED' && step.rung !== forced
+      ? { ...step, verdict: 'REJECTED' as const, reason }
+      : step)
+    return steps.some((step) => step.rung === forced)
+      ? steps.map((step) => step.rung === forced ? { ...step, verdict: 'ADOPTED' as const, reason } : step)
+      : [...steps, { rung: forced, verdict: 'ADOPTED' as const, reason }].slice(0, 7)
+  }
+  const forceKeep = businessTask.outputRequirement === 'REQUIRED' && design.redesign.strategy !== 'KEEP'
+
   // roleNoteは「確認済み役割の維持」専用の定型欄。LLMが自由記述で埋めてきても、ここで常に上書き・削除する
   const redesign = {
     ...design.redesign,
-    ...(businessTask.outputRequirement === 'REQUIRED' ? { strategy: 'KEEP' as const } : {}),
+    ...(forceKeep ? { strategy: 'KEEP' as const, ladder: reconcileLadder('KEEP', '成果物・形式が必要と確認済みのため、現在の形を維持します') } : {}),
     roles: { ...design.redesign.roles, human: [...new Set([...design.redesign.roles.human, ...requiredRoles])] },
   }
   if (roleNote) redesign.roleNote = roleNote

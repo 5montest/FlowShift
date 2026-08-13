@@ -470,6 +470,17 @@ img.account-chip { object-fit: cover; }
 .hypothesis-pending p { margin: 0; color: var(--fs-color-text-muted); font-size: var(--fs-type-compact-size); line-height: 1.6; }
 .facts-list { margin: 0 0 28px; padding-left: 1.2em; font-size: var(--fs-type-body-size); line-height: 1.8; }
 
+/* 検討の梯子（廃止→…→AI委譲の判断トレース） */
+.ladder-note { margin: 0 0 12px; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); }
+.ladder-list { margin: 0 0 28px; padding: 0; border-top: 1px solid var(--fs-color-border); list-style: none; }
+.ladder-list li { display: grid; grid-template-columns: 130px 52px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--fs-color-border-soft); }
+.ladder-list b { font-size: var(--fs-type-compact-size); }
+.ladder-list li > span { font-size: var(--fs-type-dense-size); font-weight: 800; }
+.ladder-list p { margin: 0; color: var(--fs-color-text-secondary); font-size: var(--fs-type-dense-size); line-height: 1.6; }
+.ladder-adopted > span { color: var(--fs-color-brand); }
+.ladder-rejected > span { color: var(--fs-color-text-muted); }
+.ladder-deferred > span { color: var(--fs-color-assumption); }
+
 /* Reduction tracking */
 .reduction-summary { margin-top: 24px; padding-top: 18px; border-top: 2px solid var(--fs-color-rule); }
 .reduction-summary h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: var(--fs-type-subheading-size); }
@@ -613,5 +624,6 @@ img.account-chip { object-fit: cover; }
   .category-bar { grid-template-columns: 88px minmax(60px, 1fr) 70px; gap: 10px; }
   .category-bar span svg { display: none; }
   .project-card dl { flex-direction: column; gap: 7px; }
+  .ladder-list li { grid-template-columns: 96px 44px minmax(0, 1fr); gap: 8px; }
   .action-bar { flex-wrap: wrap; }
 }

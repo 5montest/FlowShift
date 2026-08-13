@@ -10,8 +10,13 @@ export const validationLabels = {
   REQUIREMENT_VALIDATION: '要件確認', STAKEHOLDER_REVIEW: '関係者確認',
 } as const
 
+// 改善の検討梯子（上から順に問う）の各段のラベル
 export const redesignStrategyLabels = {
-  AUTOMATE: '自動化案', ON_DEMAND: 'オンデマンド化案', ELIMINATE: '廃止案', KEEP: '現状維持案',
+  ELIMINATE: '廃止案', SIMPLIFY: '簡素化案', ON_DEMAND: 'オンデマンド化案', AUTOMATE: 'ルール自動化案', AI_ASSIST: 'AI支援案', AI_DELEGATE: 'AI委譲案', KEEP: '現状維持案',
+} as const
+
+export const ladderVerdictLabels = {
+  ADOPTED: '採用', REJECTED: '見送り', DEFERRED: '要検証',
 } as const
 
 export const projectStatusLabels: Record<ProjectStatus, string> = {

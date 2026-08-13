@@ -2,7 +2,7 @@ import { ArrowRight, Bot, CircleAlert, CircleCheck, CircleHelp, Cog, FlaskConica
 import ToolTitle from '../components/ToolTitle'
 import WorkflowDiagram from '../components/WorkflowDiagram'
 import { formatMinutes } from '../lib/format'
-import { contextLabels, redesignStrategyLabels, validationLabels } from '../lib/labels'
+import { contextLabels, ladderVerdictLabels, redesignStrategyLabels, validationLabels } from '../lib/labels'
 import { useAsyncAction } from '../lib/useAsync'
 import type { BusinessDesign, BusinessTask, ImprovementProject } from '../types'
 
@@ -62,8 +62,14 @@ export default function HypothesisScreen({ task, design, designError, savedProje
     </section>
 
     {design && <>
-      <details className="report-section" open><summary>根拠と工程<small>確認できたこと・仮説上の工程と役割</small></summary>
-        <section className="workflow-section"><h2><CircleCheck size={18} className="heading-icon" />確認できたこと</h2><ul className="facts-list">{design.analysis.facts.map((item) => <li key={item}>{item}</li>)}</ul><h2>仮説上の工程</h2><WorkflowDiagram steps={design.redesign.workflow} ariaLabel="再設計仮説の工程" /></section>
+      <details className="report-section" open><summary>根拠と工程<small>確認できたこと・検討の梯子・工程と役割</small></summary>
+        <section className="workflow-section"><h2><CircleCheck size={18} className="heading-icon" />確認できたこと</h2><ul className="facts-list">{design.analysis.facts.map((item) => <li key={item}>{item}</li>)}</ul>
+          {design.redesign.ladder && design.redesign.ladder.length > 0 && <>
+            <h2>検討の梯子</h2>
+            <p className="ladder-note">廃止→簡素化→ルール自動化→AI支援→AI委譲の順に問い、最初に成立した段を仮説にしています。</p>
+            <ol className="ladder-list">{design.redesign.ladder.map((step) => <li key={step.rung} className={`ladder-${step.verdict.toLowerCase()}`}><b>{redesignStrategyLabels[step.rung]}</b><span>{ladderVerdictLabels[step.verdict]}</span><p>{step.reason}</p></li>)}</ol>
+          </>}
+          <h2>仮説上の工程</h2><WorkflowDiagram steps={design.redesign.workflow} ariaLabel="再設計仮説の工程" /></section>
         <section className="role-section"><h2>担当する役割</h2><div className="role-grid"><div><h3><Cog size={16} className="heading-icon" />システム</h3><ul>{design.redesign.roles.system.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3><Bot size={16} className="heading-icon" />AI</h3><ul>{design.redesign.roles.ai.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3><UserRound size={16} className="heading-icon" />人</h3><ul>{design.redesign.roles.human.map((item) => <li key={item}>{item}</li>)}</ul></div></div><p className="comparison-assumption">前提：{design.redesign.impact.assumption}</p></section>
       </details>
       <details className="report-section"><summary>検証のはじめ方<small>{design.validationPlan.items[0]?.title}など{design.validationPlan.items.length}件</small></summary>

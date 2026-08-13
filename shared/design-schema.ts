@@ -39,6 +39,8 @@ export const contextDimensionSchema = z.enum([
 
 export const optionMeaningSchema = z.object({
   outputNeed: z.enum(['ASYNC_OK', 'ON_DEMAND', 'SYNC_DISCUSSION_STILL_REQUIRED', 'CURRENT_FORMAT_REQUIRED', 'UNKNOWN']).optional(),
+  // 誤りの影響の大きさ（NIST的な失敗コスト）。risksの回答が設計判断へ機械反映されるための機械可読値
+  failureCost: z.enum(['HIGH', 'LOW']).optional(),
   roles: z.array(z.object({
     name: shortText,
     present: z.boolean(),
@@ -189,6 +191,8 @@ export function businessTaskDraftSchemaFor(contextText: string) {
 export const businessTaskSchema = businessTaskDraftSchema.extend({
   observed: workObservationSchema,
   answerEvidence: z.array(interviewAnswerSchema).max(20).default([]),
+  // 最新のrisks回答meaningからfinalizeBusinessTaskが決定論で設定する（LLMには書かせない）
+  failureCost: z.enum(['HIGH', 'LOW', 'UNKNOWN']).default('UNKNOWN'),
 }).strict().superRefine((task, context) => {
   const latestOutputMeaning = task.answerEvidence.map((answer) => answer.meaning?.outputNeed).filter(Boolean).at(-1)
   if (latestOutputMeaning === 'SYNC_DISCUSSION_STILL_REQUIRED' && (
@@ -213,7 +217,15 @@ export const businessTaskSchema = businessTaskDraftSchema.extend({
 
 export const workflowKindSchema = z.enum(['human', 'system', 'ai', 'decision', 'output'])
 export const workflowStepSchema = z.object({ label: shortText, detail: shortText, kind: workflowKindSchema }).strict()
-export const redesignStrategySchema = z.enum(['ELIMINATE', 'ON_DEMAND', 'AUTOMATE', 'KEEP'])
+// 改善の検討梯子（仕様書§16・Hammer以来のBPR思想）：上の段から順に問い、最初に成立した段を選ぶ。
+// AUTOMATE=条件を明文化できるルール自動化・API連携、AI_ASSIST=AIが下書きし人が確認、AI_DELEGATE=AI単独実行。
+export const redesignStrategySchema = z.enum(['ELIMINATE', 'SIMPLIFY', 'ON_DEMAND', 'AUTOMATE', 'AI_ASSIST', 'AI_DELEGATE', 'KEEP'])
+export const ladderVerdictSchema = z.enum(['ADOPTED', 'REJECTED', 'DEFERRED'])
+export const ladderStepSchema = z.object({
+  rung: redesignStrategySchema,
+  verdict: ladderVerdictSchema,
+  reason: shortText,
+}).strict()
 export const designReadinessSchema = z.enum(['HYPOTHESIS_READY', 'NEEDS_CONTEXT'])
 export const validationTypeSchema = z.enum(['PILOT', 'TECHNICAL_FEASIBILITY', 'OFFLINE_EVALUATION', 'REQUIREMENT_VALIDATION', 'STAKEHOLDER_REVIEW'])
 
@@ -242,6 +254,9 @@ export const designOutputSchema = z.object({
   }).strict(),
   redesign: z.object({
     strategy: redesignStrategySchema,
+    // 検討の梯子のトレース：採用した段まで、各段の判断（採用/見送り/要検証）と理由を1行ずつ。
+    // optional＝旧保存データ互換。生成時はdesignOutputSchemaForが必須化する。
+    ladder: z.array(ladderStepSchema).max(7).optional(),
     hypothesis: z.string().trim().min(1).max(200),
     // 確認済み役割の維持を明記する定型文。hypothesis本文が役割に触れていない場合だけ
     // finalizeBusinessDesignが設定する（本文への機械連結は文切れを起こすためやめた）
@@ -277,6 +292,16 @@ export function designOutputSchemaFor(task: BusinessTask) {
     }
     if (task.outputRequirement === 'REQUIRED' && design.redesign.strategy === 'ELIMINATE') {
       context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '必要と確認された同期機能・成果物を廃止できません。' })
+    }
+    // 生成時は検討の梯子のトレースを必須にする（保存データはoptionalのまま＝旧データ互換）
+    if (!design.redesign.ladder?.length) {
+      context.addIssue({ code: 'custom', path: ['redesign', 'ladder'], message: '検討の梯子（各段の判断と理由）をladderへ記録してください。' })
+    } else if (!design.redesign.ladder.some((step) => step.verdict === 'ADOPTED' && step.rung === design.redesign.strategy)) {
+      context.addIssue({ code: 'custom', path: ['redesign', 'ladder'], message: 'ladderには選んだstrategyの段をverdict=ADOPTEDで含めてください。' })
+    }
+    // 誤りの影響が大きいと回答済みなら、AI単独実行を提案しない（人の確認を挟むAI_ASSISTへ）
+    if (task.failureCost === 'HIGH' && design.redesign.strategy === 'AI_DELEGATE') {
+      context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '誤りの影響が大きいと回答済みのため、AI単独実行ではなく人の確認を挟む構成にしてください。' })
     }
   })
 }
