@@ -1,4 +1,4 @@
-import { ArrowLeft, House, Menu, UserRound } from 'lucide-react'
+import { ArrowLeft, House, LogOut, Menu, UserRound } from 'lucide-react'
 import type { Screen } from '../types'
 
 const locations: Partial<Record<Screen, string>> = {
@@ -11,7 +11,7 @@ function Logo() {
   return <span className="wordmark"><i aria-hidden="true">F</i><b>FlowShift</b></span>
 }
 
-export default function AppHeader({ screen, canRestart, email, picture, onBack, onHome, onRestart, onOpenProfile }: {
+export default function AppHeader({ screen, canRestart, email, picture, onBack, onHome, onRestart, onOpenProfile, onDisconnect }: {
   screen: Screen
   canRestart: boolean
   email?: string
@@ -20,6 +20,7 @@ export default function AppHeader({ screen, canRestart, email, picture, onBack, 
   onHome: () => void
   onRestart: () => void
   onOpenProfile?: () => void
+  onDisconnect?: () => void
 }) {
   return (
     <header className="app-header">
@@ -40,6 +41,7 @@ export default function AppHeader({ screen, canRestart, email, picture, onBack, 
           {email && onOpenProfile && <button type="button" onClick={onOpenProfile}>プロフィール設定</button>}
           <button type="button" onClick={onHome}><House size={18} />ワークスペース</button>
           {canRestart && <button type="button" onClick={onRestart}>最初からやり直す</button>}
+          {email && onDisconnect && <button type="button" className="menu-disconnect" onClick={onDisconnect}><LogOut size={18} />接続を解除</button>}
         </div></details>}
       </div>
     </header>

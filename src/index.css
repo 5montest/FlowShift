@@ -359,6 +359,7 @@ img.account-chip { object-fit: cover; }
 .header-menu > div { position: absolute; top: 48px; right: 0; width: 230px; padding: 8px; border: 1px solid var(--fs-color-border-medium); background: var(--fs-color-surface); box-shadow: var(--fs-shadow-overlay); }
 .header-menu button { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 10px; padding: 10px 12px; color: var(--fs-color-text); border: 0; background: transparent; text-align: left; }
 .header-menu button:hover { background: var(--fs-color-surface-subtle); }
+.header-menu .menu-disconnect { margin-top: 4px; border-top: 1px solid var(--fs-color-border); color: var(--fs-color-text-secondary); }
 .confirm-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--fs-color-backdrop); }
 .confirm-dialog { width: min(100%, 460px); padding: 26px; border: 1px solid var(--fs-color-border-control); background: var(--fs-color-surface); box-shadow: var(--fs-shadow-dialog); }
 .confirm-dialog h2 { margin: 0; font-size: var(--fs-type-section-size); }
@@ -401,7 +402,6 @@ img.account-chip { object-fit: cover; }
 .empty-dashboard-projects { padding: 28px 0; border-top: 1px solid var(--fs-color-border-strong); border-bottom: 1px solid var(--fs-color-border); }
 .empty-dashboard-projects p { margin: 0; font-size: var(--fs-type-lead-size); font-weight: 750; }
 .empty-dashboard-projects span { display: block; margin-top: 7px; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); line-height: 1.6; }
-.dashboard-actions { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 32px; padding: 24px 28px; border: 1px solid var(--fs-color-border-medium); background: var(--fs-color-surface); }
 
 .multi-select-note { margin: 22px 0 -14px; color: var(--fs-color-brand); font-size: var(--fs-type-dense-size); font-weight: 800; }
 .delivery-summary { margin: 0 0 8px; border-top: 1px solid var(--fs-color-border); }
@@ -583,8 +583,6 @@ img.account-chip { object-fit: cover; }
 /* Saved hypotheses disclosure + workspace footer */
 .saved-projects-list { margin-top: 32px; border-top: 1px solid var(--fs-color-border-strong); }
 .saved-projects-list > summary { padding: 18px 0; font-size: var(--fs-type-body-size); font-weight: 800; cursor: pointer; }
-.workspace-account { color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); }
-.dashboard-actions > div { display: flex; flex-wrap: wrap; gap: 12px; }
 
 /* Note: status select */
 .decision-select { margin-top: 16px; }
@@ -604,10 +602,9 @@ img.account-chip { object-fit: cover; }
   .work-picker-list > button { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
   .work-picker-list > button > span:last-child { grid-column: 2; }
   .reduction-row { grid-template-columns: 1fr; gap: 4px; }
-  .project-title, .hypothesis-update-banner, .dashboard-actions { align-items: stretch; flex-direction: column; }
+  .project-title, .hypothesis-update-banner { align-items: stretch; flex-direction: column; }
   .hypothesis-update-banner .primary-button { width: 100%; }
   .dashboard-grid > section { padding: 22px 18px; }
-  .dashboard-actions { padding: 20px 18px; }
   .category-bar { grid-template-columns: 88px minmax(60px, 1fr) 70px; gap: 10px; }
   .category-bar span svg { display: none; }
   .project-card dl { flex-direction: column; gap: 7px; }

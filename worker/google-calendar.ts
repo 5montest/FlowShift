@@ -58,6 +58,11 @@ const jwtPayloadSchema = z.object({
   iat: z.number().int().positive(),
 }).passthrough()
 
+const userinfoSchema = z.object({
+  email: z.string().email().optional(),
+  picture: z.string().url().max(1024).optional(),
+}).passthrough()
+
 const certsSchema = z.object({
   keys: z.array(z.object({
     kty: z.literal('RSA'),
@@ -332,12 +337,26 @@ export async function finishGoogleAuthorization(request: Request, env: Env): Pro
   }
 
   const identity = await verifyGoogleIdToken(tokenResult.data.id_token, env.GOOGLE_CLIENT_ID)
+  let email = identity.email ?? null
+  let picture = identity.picture ?? null
+  if (!email || !picture) {
+    // Workspaceアカウント等ではID Tokenにpictureが載らないことがあるため、userinfoで補完（失敗しても連携は続行）
+    const info = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tokenResult.data.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    }).then((response) => response.ok ? response.json() : null).catch(() => null)
+    const parsed = userinfoSchema.safeParse(info)
+    if (parsed.success) {
+      email = email ?? parsed.data.email ?? null
+      picture = picture ?? parsed.data.picture ?? null
+    }
+  }
   const now = Date.now()
   await env.DB.prepare(`
     INSERT INTO users (google_sub, email, picture, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email, picture = excluded.picture, updated_at = excluded.updated_at
-  `).bind(identity.sub, identity.email ?? null, identity.picture ?? null, now, now).run()
+  `).bind(identity.sub, email, picture, now, now).run()
   const user = await env.DB.prepare('SELECT id FROM users WHERE google_sub = ?').bind(identity.sub).first<{ id: number }>()
   if (!user) throw new GoogleCalendarError('database_error', 'Googleユーザーを保存できませんでした。', 500)
 

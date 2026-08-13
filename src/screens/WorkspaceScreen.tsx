@@ -17,8 +17,7 @@ const categoryIcons: Record<string, typeof Users> = {
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 進行中の仮説・採用済み仮説の削減）を置く。
-export default function WorkspaceScreen({ email, groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork, onDisconnect }: {
-  email?: string
+export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork }: {
   groups: WorkGroup[]
   projects: ImprovementProject[]
   drafts: SessionDraft[]
@@ -36,7 +35,6 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
   onDiscardDraft: (groupId: string) => void
   onMuteWork: (title: string) => void
   onUnmuteWork: (title: string) => void
-  onDisconnect: () => Promise<void>
 }) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [detailGroup, setDetailGroup] = useState<WorkGroup | null>(null)
@@ -147,7 +145,6 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
     {projects.length > 0 && <details className="saved-projects-list"><summary>保存した仮説をすべて見る（{projects.length}件）</summary>
       <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpenProject(project)}><span><strong>{projectName(project)}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><StatusBadge status={project.status} /><ArrowRight size={20} /></button>)}</div>
     </details>}
-    <div className="dashboard-actions"><span className="workspace-account">{email ? `${email} で利用中` : ''}</span><button type="button" className="text-button" onClick={() => void onDisconnect()}>接続を解除</button></div>
     {detailGroup && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog group-detail" role="dialog" aria-modal="true" aria-labelledby="group-detail-heading">
       <p className="eyebrow">カレンダーで分かったこと</p>
       <h2 id="group-detail-heading">{detailGroup.title}</h2>
