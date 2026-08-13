@@ -11,7 +11,7 @@ function Logo() {
   return <span className="wordmark"><i aria-hidden="true">F</i><b>FlowShift</b></span>
 }
 
-export default function AppHeader({ screen, onBack, onHome, onRestart }: { screen: Screen; onBack: () => void; onHome: () => void; onRestart: () => void }) {
+export default function AppHeader({ screen, canRestart, onBack, onHome, onRestart }: { screen: Screen; canRestart: boolean; onBack: () => void; onHome: () => void; onRestart: () => void }) {
   return (
     <header className="app-header">
       <div className="header-inner">
@@ -25,7 +25,7 @@ export default function AppHeader({ screen, onBack, onHome, onRestart }: { scree
         )}
         {screen !== 'connect' && <details className="header-menu"><summary aria-label="メニュー"><Menu size={22} /></summary><div>
           <button type="button" onClick={onHome}><House size={18} />ワークスペース</button>
-          {screen !== 'workspace' && <button type="button" onClick={onRestart}>最初からやり直す</button>}
+          {canRestart && <button type="button" onClick={onRestart}>最初からやり直す</button>}
         </div></details>}
       </div>
     </header>

@@ -194,11 +194,13 @@ export async function extractBusinessTask(apiKey: string, input: InterviewReques
 }
 
 export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewPlan>> {
-  return generateJson(apiKey, interviewOptionsPrompt, input, interviewPlanSchema, 2200)
+  return generateJson(apiKey, interviewOptionsPrompt, input, interviewPlanSchema, 2600)
 }
 
 export async function createFollowUpQuestions(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<InterviewPlan>> {
-  return generateJson(apiKey, followUpPrompt, { provisionalBusinessTask: businessTask }, interviewPlanSchema, 2200)
+  // 4問×最大6選択肢のmeaningを含むと2200トークンでは途中で切れて
+  // invalid_jsonになることがあるため、余裕を持たせる
+  return generateJson(apiKey, followUpPrompt, { provisionalBusinessTask: businessTask }, interviewPlanSchema, 3600)
 }
 
 // 回答忠実性の不変条件だけを決定論で保証する：

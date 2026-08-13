@@ -21,7 +21,7 @@ export default function ConnectScreen({ calendar, error, onConnect }: {
         <ul className="service-notes" aria-label="データの取り扱い">
           <li>カレンダーは業務について質問を始める索引として使います</li>
           <li>選択した業務の観測情報と回答だけを分析のため外部AIサービスへ送信します</li>
-          <li>カレンダー全件や会話全文は保存せず、あなたが保存した仮説だけを残します</li>
+          <li>サーバーに残すのは、あなたが確認して保存した業務モデル・回答・仮説・検証計画だけです</li>
           <li>回答の途中の内容は下書きとしてこのブラウザにだけ残り、仮説の保存・破棄・30日経過で消えます</li>
         </ul>
       </div></section>

@@ -97,6 +97,10 @@ export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iter
 }
 
 export type WorkReduction = {
+  // 直近4週間のカレンダーに同じ業務が見つかったか。見つからない場合、
+  // 「全削減」と「タイトル変更・休暇などで照合できない」を区別できないため、
+  // 削減量として断定しない（UI側は「見当たりません」と表示する）。
+  matched: boolean
   baselineOccurrences: number
   baselineMinutes: number
   currentOccurrences: number
@@ -106,12 +110,12 @@ export type WorkReduction = {
 
 // 採用した仮説の「どのくらい減ったか」。保存時点の観測値と、直近4週間の同じ業務
 // （出所グループid、無ければ正規化タイトル）を突き合わせる。
-// カレンダーから消えた業務は0回（全削減）として扱う。
 export function computeReduction(baseline: { title: string; occurrences: number; totalMinutes: number; sourceGroupId?: string }, currentGroups: WorkGroup[]): WorkReduction {
   const key = normalizeWorkTitle(baseline.title)
   const current = (baseline.sourceGroupId ? currentGroups.find((group) => group.id === baseline.sourceGroupId) : undefined)
     ?? currentGroups.find((group) => normalizeWorkTitle(group.title) === key)
   return {
+    matched: Boolean(current),
     baselineOccurrences: baseline.occurrences,
     baselineMinutes: baseline.totalMinutes,
     currentOccurrences: current?.occurrences ?? 0,

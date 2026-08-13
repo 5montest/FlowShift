@@ -31,7 +31,16 @@ function writeMap(map: Record<string, SessionDraft>) {
 }
 
 export function listDrafts(): SessionDraft[] {
-  return Object.values(readMap()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+  const map = readMap()
+  // 期限切れ・不正エントリは読み時に落ちるので、その状態を書き戻して物理的にも消す
+  // （「30日で自動的に消えます」を実際に守る）
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (raw && Object.keys(JSON.parse(raw) as Record<string, unknown>).length !== Object.keys(map).length) writeMap(map)
+  } catch {
+    // noop
+  }
+  return Object.values(map).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
 }
 
 export function loadDraft(groupId: string): SessionDraft | null {

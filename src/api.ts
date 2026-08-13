@@ -150,6 +150,19 @@ export async function updateImprovementProject(id: string, design: BusinessDesig
   return result.project
 }
 
+export async function deleteImprovementProject(id: string): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  } catch {
+    throw new ApiError('network', 'APIに接続できません。通信状態を確認して再試行してください。')
+  }
+  if (response.ok) return
+  const payload: unknown = await response.json().catch(() => null)
+  const error = apiErrorSchema.safeParse(payload)
+  throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : '仮説を削除できませんでした。')
+}
+
 export async function updateImprovementProjectContext(id: string, pendingContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
   const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
     action: 'context',

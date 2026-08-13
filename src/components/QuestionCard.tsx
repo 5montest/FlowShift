@@ -15,7 +15,8 @@ export default function QuestionCard({ question, submitLabel = '次へ', busy = 
   const [customMode, setCustomMode] = useState(false)
 
   function toggleOption(option: InterviewOption) {
-    setCustomMode(false); setDraft('')
+    // 自由入力の下書きは消さない（選択肢を試した後に戻れるように）
+    setCustomMode(false)
     if ((question.selection ?? 'SINGLE') === 'SINGLE') {
       setSelectedOptionIds([option.id])
       return

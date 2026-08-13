@@ -20,6 +20,16 @@ function selectedOptionIds(answer: InterviewAnswer): string[] {
   return answer.optionIds ?? (answer.optionId ? [answer.optionId] : [])
 }
 
+// 自由入力（最大2000字）を、スキーマ上限のある派生フィールドへ入れるときの切り詰め。
+// answerEvidenceの原文は失わない。
+function clip(value: string, max = 240): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
+}
+
+function clipped(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : clip(value)
+}
+
 export function finalizeBusinessTask(observed: WorkObservation, answers: InterviewAnswer[], draft: BusinessTaskDraft): BusinessTask {
   const roleSignals = new Map<string, BusinessTask['businessRoleDetails'][number]>()
   for (const answer of answers) {
@@ -82,7 +92,7 @@ export function finalizeBusinessTask(observed: WorkObservation, answers: Intervi
     ...(processAnswer ? { steps: processValues } : {}),
     ...(outputMeaning ? {
       outputRequirement: outputRequirementByMeaning[outputMeaning],
-      outputRequirementReason: `選択回答「${latestOutputAnswer?.answer}」をそのまま反映`,
+      outputRequirementReason: clip(`回答「${latestOutputAnswer?.answer}」に基づいています`, 800),
       deliveryModel: {
         ...deliveryByMeaning[outputMeaning],
         sourceQuestionId: latestOutputAnswer?.questionId,
@@ -95,15 +105,15 @@ export function finalizeBusinessTask(observed: WorkObservation, answers: Intervi
 
 export function createDeterministicTask(observed: WorkObservation, answers: InterviewAnswer[]): BusinessTask {
   const latest = (dimension: InterviewAnswer['dimension']) => answers.filter((answer) => answer.dimension === dimension).at(-1)
-  const purpose = latest('purpose')?.answer ?? '未確認'
-  const decision = latest('decision')?.answer
-  const process = latest('process')?.answer
-  const stakeholders = latest('stakeholders')?.answer
+  const purpose = clip(latest('purpose')?.answer ?? '未確認', 800)
+  const decision = clipped(latest('decision')?.answer)
+  const process = clipped(latest('process')?.answer)
+  const stakeholders = clipped(latest('stakeholders')?.answer)
   const fields = {
-    exceptions: latest('exceptions')?.answer,
-    constraints: latest('constraints')?.answer,
-    dependencies: latest('dependencies')?.answer,
-    risks: latest('risks')?.answer,
+    exceptions: clipped(latest('exceptions')?.answer),
+    constraints: clipped(latest('constraints')?.answer),
+    dependencies: clipped(latest('dependencies')?.answer),
+    risks: clipped(latest('risks')?.answer),
   }
   const state = (dimension: InterviewAnswer['dimension']) => {
     const answer = latest(dimension)
@@ -111,7 +121,7 @@ export function createDeterministicTask(observed: WorkObservation, answers: Inte
   }
 
   return finalizeBusinessTask(observed, answers, {
-    name: observed.title,
+    name: clip(observed.title),
     purpose,
     frequency: `過去4週間で${observed.occurrences}回`,
     duration: `1回平均${observed.averageMinutes}分、合計${observed.totalMinutes}分`,

@@ -111,6 +111,11 @@ app.get('/api/calendar/events', async (c) => c.json(await listGoogleCalendarEven
 function aiRoute<Schema extends z.ZodType>(path: string, schema: Schema, run: (apiKey: string, input: z.infer<Schema>) => Promise<{ body: Record<string, unknown>; usage?: unknown }>) {
   app.post(path, async (c) => {
     const requestId = crypto.randomUUID()
+    // クロスオリジンからログイン済みブラウザを使ったLLM呼び出しの悪用を防ぐ
+    // （localhostはスモークテスト用に免除）
+    if (!isLocalRequest(c.req.raw) && c.req.header('Origin') !== new URL(c.req.url).origin) {
+      return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
+    }
     if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
     const body = await c.req.json<unknown>().catch(() => null)
     const input = schema.safeParse(body)
@@ -229,6 +234,20 @@ app.patch('/api/projects/:id', async (c) => {
     'UPDATE improvement_projects SET task_name = ?, status = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
   ).bind(projectName(project), project.status, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
+})
+
+app.delete('/api/projects/:id', async (c) => {
+  const requestId = crypto.randomUUID()
+  if (c.req.header('Origin') !== new URL(c.req.url).origin) {
+    return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
+  }
+  const session = c.get('session')
+  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
+  const result = await c.env.DB.prepare(
+    'DELETE FROM improvement_projects WHERE id = ? AND user_id = ?',
+  ).bind(c.req.param('id'), session.userId).run()
+  if (!result.meta.changes) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 })
 
 app.onError((error, c) => {

@@ -2,47 +2,67 @@ import { LoaderCircle, ArrowRight } from 'lucide-react'
 import ToolTitle from '../components/ToolTitle'
 import WorkflowDiagram from '../components/WorkflowDiagram'
 import { formatMinutes } from '../lib/format'
-import { validationLabels } from '../lib/labels'
+import { contextLabels, validationLabels } from '../lib/labels'
 import { useAsyncAction } from '../lib/useAsync'
 import type { BusinessDesign, BusinessTask, ImprovementProject } from '../types'
 
 // 仮説画面。遷移直後に「現在」側（手元の決定論データ）を即描画し、
 // 仮説側だけ生成を待つ。スピナー単独画面は作らない。
-export default function HypothesisScreen({ task, design, designError, connected, savedProject, onRetry, onSave, onOpenSaved }: {
+export default function HypothesisScreen({ task, design, designError, savedProject, onBackToSession, onRetry, onSave, onOpenSaved }: {
   task: BusinessTask
   design: BusinessDesign | null
   designError: string
-  connected: boolean
   savedProject: ImprovementProject | null
+  onBackToSession: () => void
   onRetry: () => void
   onSave: () => Promise<void>
   onOpenSaved: () => void
 }) {
   const { status, errorMessage, run } = useAsyncAction()
-  const roles = task.businessRoleDetails.filter((role) => role.present)
+  const needsContext = design?.analysis.readiness === 'NEEDS_CONTEXT'
+  const blockingKeys = (['constraints', 'dependencies', 'risks'] as const).filter((key) => task.contextStatus[key] === 'UNKNOWN')
+  const comparisons = design ? [
+    ['定期業務', design.redesign.metrics.scheduledOutputBefore, design.redesign.metrics.scheduledOutputAfter],
+    ['人の定期作業', design.redesign.metrics.routineHumanWorkBefore, design.redesign.metrics.routineHumanWorkAfter],
+    ['変化の検知', design.redesign.metrics.detectionBefore, design.redesign.metrics.detectionAfter],
+    ['成果物', design.redesign.metrics.outputBefore, design.redesign.metrics.outputAfter],
+  ] as const : []
 
   return <main className="tool-main">
-    <ToolTitle title="再設計仮説" summary="これは決定ではありません。前提を確かめながら、あなたが直していく仮説です。" />
+    <ToolTitle title={`再設計仮説：${task.name}`} summary="これは決定ではありません。前提を確かめながら、あなたが直していく仮説です。" />
     <section className="result-overview">
-      <div className="result-compare">
-        <section><h3>現在</h3><strong>{task.observed.occurrences}回 / 4週間</strong><p>1回平均{formatMinutes(task.observed.averageMinutes)}・合計{formatMinutes(task.observed.totalMinutes)}</p>{roles.length > 0 && <p>役割：{roles.map((role) => role.name).join('・')}</p>}</section>
-        {design ? <section><h3>仮説</h3><strong>{design.redesign.metrics.routineHumanWorkAfter}</strong><p>{design.redesign.metrics.scheduledOutputAfter}</p><p>{design.redesign.metrics.detectionAfter}</p></section>
-          : <section className="hypothesis-pending" aria-live="polite"><h3>仮説</h3>{designError ? <><p className="calendar-error" role="alert">{designError}</p><button type="button" className="secondary-button" onClick={onRetry}>もう一度作る</button></> : <><LoaderCircle className="animate-spin" /><p>見直し案を組み立てています。20秒ほどかかります。</p></>}</section>}
-      </div>
+      {!design && <div className="metric-compare">
+        <div className="metric-head"><span></span><strong>現在</strong><strong>仮説</strong></div>
+        <div><span>観測</span><p>{task.observed.occurrences}回 / 4週間・合計{formatMinutes(task.observed.totalMinutes)}</p><p className="hypothesis-pending-cell" aria-live="polite">{designError ? '' : '組み立て中…'}</p></div>
+      </div>}
+      {!design && (designError
+        ? <div className="request-state" role="alert"><div><strong>仮説を作成できませんでした</strong><p>{designError}</p><button type="button" className="primary-button" onClick={onRetry}>もう一度作る</button></div></div>
+        : <div className="hypothesis-pending" aria-live="polite"><LoaderCircle className="animate-spin" /><p>見直し案を組み立てています。最大1分ほどかかることがあります。</p></div>)}
       {design && <>
-        <div className={`judgement ${design.analysis.readiness === 'NEEDS_CONTEXT' ? 'needs-context' : ''}`}><strong>{design.analysis.readiness === 'NEEDS_CONTEXT' ? '判断保留' : '検証候補'}</strong><p>{design.analysis.conclusion}</p></div>
-        <div className="result-headline"><h2>{design.redesign.headline}</h2><p>{design.redesign.hypothesis}</p></div>
-        <div className="result-conditions">
-          <section><h3>成り立つ前提</h3>{design.analysis.assumptions.length ? <ul>{design.analysis.assumptions.slice(0, 4).map((item) => <li key={item}>{item}</li>)}</ul> : <p>追加の前提はありません。</p>}</section>
-          <section><h3>まだ分からないこと</h3>{design.analysis.unknowns.length ? <ul>{design.analysis.unknowns.slice(0, 4).map((item) => <li key={item}>{item}</li>)}</ul> : <p>重大な未確認の項目はありません。</p>}</section>
+        <div className={`judgement ${needsContext ? 'needs-context' : ''}`}>
+          <strong>{needsContext ? '判断保留' : '検証候補'}</strong>
+          <div>
+            <p>{design.analysis.conclusion}</p>
+            {needsContext && blockingKeys.length > 0 && <p className="judgement-hint">{blockingKeys.map((key) => contextLabels[key]).join('・')}を確認すると、判断できるようになります。<button type="button" className="text-button" onClick={onBackToSession}>整理に戻って追加する</button></p>}
+          </div>
         </div>
-        <div className="result-actions">{!connected ? <span>保存するにはGoogle Calendarへ接続してください。</span> : savedProject ? <button type="button" className="primary-button" onClick={onOpenSaved}>保存した業務を開く<ArrowRight size={20} /></button> : <button type="button" className="primary-button" disabled={status === 'loading'} onClick={() => void run(onSave)}>{status === 'loading' ? <><LoaderCircle className="animate-spin" />保存中</> : '仮説を保存して検証を始める'}</button>}</div>
+        <div className="result-headline"><h2>{design.redesign.headline}</h2><p>{design.redesign.hypothesis}</p></div>
+        <div className="metric-compare">
+          <div className="metric-head"><span></span><strong>現在</strong><strong>仮説</strong></div>
+          <div><span>観測</span><p>{task.observed.occurrences}回 / 4週間・合計{formatMinutes(task.observed.totalMinutes)}</p><p>—</p></div>
+          {comparisons.map(([label, before, after]) => <div key={label}><span>{label}</span><p>{before}</p><p className="metric-after">{after}</p></div>)}
+        </div>
+        <div className="result-conditions">
+          <section><h3>成り立つ前提</h3>{design.analysis.assumptions.length ? <ul>{design.analysis.assumptions.map((item) => <li key={item}>{item}</li>)}</ul> : <p>追加の前提はありません。</p>}</section>
+          <section><h3>まだ分からないこと</h3>{design.analysis.unknowns.length ? <ul>{design.analysis.unknowns.map((item) => <li key={item}>{item}</li>)}</ul> : <p>重大な未確認の項目はありません。</p>}</section>
+        </div>
+        <div className="result-actions">{savedProject ? <button type="button" className="primary-button" onClick={onOpenSaved}>保存した業務を開く<ArrowRight size={20} /></button> : <button type="button" className="primary-button" disabled={status === 'loading'} onClick={() => void run(onSave)}>{status === 'loading' ? <><LoaderCircle className="animate-spin" />保存中</> : '仮説を保存して検証を始める'}</button>}<span>保存すると、ワークスペースの「進行中の仮説」から検証を続けられます。</span></div>
         {status === 'error' && <p className="calendar-error" role="alert">{errorMessage}</p>}
       </>}
     </section>
 
     {design && <>
-      <details className="report-section"><summary>根拠と工程<small>確認できたこと・仮説上の工程と役割</small></summary>
+      <details className="report-section" open><summary>根拠と工程<small>確認できたこと・仮説上の工程と役割</small></summary>
         <section className="workflow-section"><h2>確認できたこと</h2><ul className="facts-list">{design.analysis.facts.map((item) => <li key={item}>{item}</li>)}</ul><h2>仮説上の工程</h2><WorkflowDiagram steps={design.redesign.workflow} ariaLabel="再設計仮説の工程" /></section>
         <section className="role-section"><h2>担当する役割</h2><div className="role-grid"><div><h3>システム</h3><ul>{design.redesign.roles.system.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>AI</h3><ul>{design.redesign.roles.ai.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>人</h3><ul>{design.redesign.roles.human.map((item) => <li key={item}>{item}</li>)}</ul></div></div><p className="comparison-assumption">前提：{design.redesign.impact.assumption}</p></section>
       </details>

@@ -14,6 +14,9 @@ export const sessionDraftSchema = z.object({
   plan: interviewPlanSchema,
   answers: z.array(interviewAnswerSchema).max(20),
   pendingQuestions: z.array(interviewQuestionSchema).max(4),
+  // 回答済みの質問も「修正」で再表示できるよう、出題した質問を保持する。
+  // 旧下書きには無いためdefaultで補う。
+  askedQuestions: z.array(interviewQuestionSchema).max(40).default([]),
   task: businessTaskSchema.nullable(),
   // LLM整理済みタスク。mergeRefinedの土台になるため別に保持する
   refinedTask: businessTaskSchema.nullable(),

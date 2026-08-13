@@ -11,7 +11,7 @@ export const validationLabels = {
 } as const
 
 export const projectStatusLabels: Record<ProjectStatus, string> = {
-  DRAFT: '下書き', VALIDATING: '検証中', ADOPTED: '採用', REJECTED: '却下', ON_HOLD: '保留',
+  DRAFT: '判断前', VALIDATING: '検証中', ADOPTED: '採用', REJECTED: '却下', ON_HOLD: '保留',
 }
 
 export function contextStateLabel(state: ContextState): string {
