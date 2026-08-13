@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { bridgeQuestionsFor, fallbackCorePlan, QUESTION_BUDGET } from '../shared/context-questions'
 import { createDeterministicTask } from '../shared/interview'
 import { projectContext, projectName } from '../shared/project-schema'
-import { applyCategories, groupCalendarEvents, mergeWorkGroups, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
+import { applyCategories, calendarKeyOfGroupId, groupCalendarEvents, mergeWorkGroups, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
+import type { CalendarEntry } from '../shared/calendar-schema'
 import type { UserProfile } from '../shared/profile-schema'
 import {
   ApiError,
@@ -15,6 +16,7 @@ import {
   generateBusinessDesign,
   generateFollowUpPlan,
   generateInterviewPlan,
+  getCalendarList,
   getGoogleCalendarEvents,
   getGoogleCalendarStatus,
   getImprovementProjects,
@@ -113,6 +115,11 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [showProfileDialog, setShowProfileDialog] = useState(false)
   const [showAddWork, setShowAddWork] = useState(false)
+  // アクセス可能なカレンダーの一覧と表示中カレンダー。null=自分（primary）。
+  // リロードで自分に戻る（安全側の既定。永続化しない）
+  const [calendars, setCalendars] = useState<CalendarEntry[]>([])
+  const [viewingCalendar, setViewingCalendar] = useState<CalendarEntry | null>(null)
+  const [calendarListHint, setCalendarListHint] = useState('')
 
   // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
   const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
@@ -183,6 +190,7 @@ export default function App() {
         // 接続済みならワークスペースへ入ってから読み込む（読み込み失敗で接続画面へ
         // 誤って戻さない。ConnectScreenの接続ボタン再押下も防ぐ）
         setScreen('workspace')
+        void loadCalendarList()
         await loadWorkspace()
       }
     } catch (error) {
@@ -206,34 +214,63 @@ export default function App() {
       })
   }
 
-  async function loadWorkspace() {
+  // アクセス可能なカレンダーの一覧（自分＋共有）。旧接続は一覧スコープが無く403になるため
+  // ヒントだけ出して自分のカレンダーで動き続ける
+  async function loadCalendarList() {
+    try {
+      const result = await getCalendarList()
+      setCalendars(result.calendars)
+      setCalendarListHint('')
+    } catch (error) {
+      setCalendars([])
+      setCalendarListHint(error instanceof ApiError && error.code === 'google_scope_denied'
+        ? '他のカレンダーを表示するには、接続を解除して再接続してください。'
+        : '')
+    }
+  }
+
+  async function loadWorkspace(view: CalendarEntry | null = viewingCalendar) {
     setCalendarBusy(true); setCalendarError('')
+    // 自分のカレンダー（primary）は接頭辞なしの現行ID体系のまま扱う
+    const other = view && !view.primary ? { id: view.id, name: view.summary } : undefined
     try {
       const [calendarResult, savedProjects, userProfile] = await Promise.all([
-        getGoogleCalendarEvents(),
+        getGoogleCalendarEvents(other?.id),
         getImprovementProjects(),
         getProfile().catch(() => null),
       ])
       const cachedCategories = readCategoryCache()
-      const nextGroups = applyCategories(mergeWorkGroups(groupCalendarEvents(calendarResult.events), listManualWork()), cachedCategories)
+      // 手動登録の業務は自分のカレンダー表示にだけ合流させる
+      const calendarGroups = groupCalendarEvents(calendarResult.events, other)
+      const nextGroups = applyCategories(other ? calendarGroups : mergeWorkGroups(calendarGroups, listManualWork()), cachedCategories)
       planCache.current.clear()
       setGroups(nextGroups)
       setProfile(userProfile)
       if (!userProfile && !profilePrompted()) setShowProfileDialog(true)
-      refineCategoriesInBackground(nextGroups, cachedCategories, userProfile)
+      // 他人の業務は閲覧者のプロフィール（職種等）で解釈させない
+      refineCategoriesInBackground(nextGroups, cachedCategories, other ? null : userProfile)
       setCalendarRange(calendarResult.range ?? null)
       setFetchedAt(new Date())
       setProjects(savedProjects)
       setNeedsReconnect(false)
       setScreen('workspace')
-      const activeTitles = savedProjects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title)
+      const currentKey = other?.id ?? null
+      const visibleProjects = savedProjects.filter((project) => calendarKeyOfGroupId(projectContext(project).observed.sourceGroupId) === currentKey)
+      const activeTitles = visibleProjects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title)
       const focus = rankDiscoveryCandidates(nextGroups, [...activeTitles, ...mutedWork])[0]
       // 下書きがあるなら質問はその中にあるので先読みしない
-      if (focus && !loadDraft(focus.id)) prefetchPlan(focus, userProfile).catch(() => {})
+      if (focus && !loadDraft(focus.id)) prefetchPlan(focus, other ? null : userProfile).catch(() => {})
     } catch (error) {
       if (isReconnectError(error)) setNeedsReconnect(true)
       setCalendarError(error instanceof Error ? error.message : 'ワークスペースを読み込めませんでした。')
     } finally { setCalendarBusy(false) }
+  }
+
+  function handleSelectCalendar(entry: CalendarEntry | null) {
+    // primary選択はnull（自分）と同義に正規化する（既存ID体系の維持）
+    const next = entry && !entry.primary ? entry : null
+    setViewingCalendar(next)
+    void loadWorkspace(next)
   }
 
   function clearSession() {
@@ -583,6 +620,7 @@ export default function App() {
       setCalendar({ configured: calendar.configured, connected: false, loading: false })
       clearSession(); setGroups([]); setProjects([]); planCache.current.clear()
       clearAllDrafts(); refreshDrafts()
+      setCalendars([]); setViewingCalendar(null); setCalendarListHint('')
       setNeedsReconnect(false)
       setScreen('connect')
     } catch (error) {
@@ -608,10 +646,14 @@ export default function App() {
     else goHome()
   }
 
+  // 表示中カレンダー由来の仮説だけをワークスペースに出す（別カレンダーの実測との嘘の削減マッチを防ぐ）
+  const currentCalendarKey = viewingCalendar && !viewingCalendar.primary ? viewingCalendar.id : null
+  const visibleProjects = projects.filter((project) => calendarKeyOfGroupId(projectContext(project).observed.sourceGroupId) === currentCalendarKey)
+
   return <div className="app-shell">
     <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} email={calendar.connected ? calendar.email : undefined} picture={calendar.connected ? calendar.picture : undefined} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} onOpenProfile={() => setShowProfileDialog(true)} onDisconnect={() => void disconnect()} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
-    {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onAddWork={() => setShowAddWork(true)} onRemoveManualWork={handleRemoveManualWork} />}
+    {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={visibleProjects} drafts={drafts} calendars={calendars} viewingCalendar={viewingCalendar} calendarListHint={calendarListHint} onSelectCalendar={handleSelectCalendar} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onAddWork={() => setShowAddWork(true)} onRemoveManualWork={handleRemoveManualWork} />}
     {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} interviewComplete={flow.interviewComplete} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { applyCategories, categorizeWork, groupCalendarEvents, isLikelyPersonal, mergeWorkGroups, rankDiscoveryCandidates, summarizeWorkGroups, workClassificationRequestSchema, workClassificationResponseSchema, workGroupSchema } from '../shared/work-group.ts'
+import { applyCategories, calendarKeyOfGroupId, categorizeWork, groupCalendarEvents, isLikelyPersonal, mergeWorkGroups, rankDiscoveryCandidates, summarizeWorkGroups, workClassificationRequestSchema, workClassificationResponseSchema, workGroupSchema } from '../shared/work-group.ts'
 
 const events = [
   { id: '1', title: '朝会', start: '2026-07-13T00:00:00.000Z', end: '2026-07-13T00:15:00.000Z', durationMinutes: 15, recurringEventId: 'daily', allDay: false },
@@ -52,6 +52,23 @@ assert.ok(workClassificationRequestSchema.safeParse({ titles: ['朝会'] }).succ
 assert.ok(!workClassificationRequestSchema.safeParse({ titles: [] }).success)
 assert.ok(workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '会議' }] }).success)
 assert.ok(!workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '謎分類' }] }).success)
+
+// 他カレンダーのグループIDは名前空間分離され、同じ定例予定IDでも自分のIDと衝突しない
+const otherCalendar = { id: 'buka@example.com', name: '部下 太郎' }
+const otherGroups = groupCalendarEvents(events, otherCalendar)
+const ownGroups = groupCalendarEvents(events)
+assert.ok(otherGroups.every((group) => group.id.startsWith('cal:buka%40example.com|')), 'other-calendar ids must be namespaced')
+assert.ok(otherGroups.every((group) => group.sourceCalendarName === '部下 太郎'), 'other-calendar groups carry the calendar name')
+assert.ok(ownGroups.every((group) => !group.id.startsWith('cal:')), 'own calendar ids must stay unprefixed')
+assert.equal(new Set([...otherGroups, ...ownGroups].map((group) => group.id)).size, otherGroups.length + ownGroups.length, 'ids must not collide across calendars')
+assert.equal(calendarKeyOfGroupId(otherGroups[0].id), 'buka@example.com')
+assert.equal(calendarKeyOfGroupId(ownGroups[0].id), null)
+assert.equal(calendarKeyOfGroupId(undefined), null)
+assert.equal(calendarKeyOfGroupId('manual:abc'), null)
+
+// 非公開予定（タイトル無し→「予定」）は巨大グループ化しても声かけしない
+const privateBlock = { id: 'recurring:private', title: '予定', occurrences: 12, totalMinutes: 720, averageMinutes: 60, firstOccurredAt: '2026-07-13T00:00:00.000Z', lastOccurredAt: '2026-08-07T00:00:00.000Z', recurringEventId: 'private', recurring: true, category: 'その他' }
+assert.ok(!rankDiscoveryCandidates([privateBlock]).length, 'untitled private events must not be suggested')
 
 // 手動登録業務のマージ：タイトル衝突はカレンダー実測が勝ち、非衝突は合計時間順に並ぶ
 const manualWork = {

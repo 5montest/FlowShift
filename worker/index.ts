@@ -16,6 +16,7 @@ import {
   GoogleCalendarError,
   googleCalendarConfigured,
   listGoogleCalendarEvents,
+  listGoogleCalendars,
 } from './google-calendar'
 
 type GoogleSession = NonNullable<Awaited<ReturnType<typeof getGoogleSession>>>
@@ -108,6 +109,7 @@ app.post('/api/google/disconnect', async (c) => {
 })
 
 app.get('/api/calendar/events', async (c) => c.json(await listGoogleCalendarEvents(c.req.raw, c.env), 200, { 'Cache-Control': 'no-store' }))
+app.get('/api/calendar/list', async (c) => c.json(await listGoogleCalendars(c.req.raw, c.env), 200, { 'Cache-Control': 'no-store' }))
 
 // 4つのAIルートは同じ形（サイズ検査→検証→呼び出し→meta付き応答）。テーブル駆動で1本化。
 function aiRoute<Schema extends z.ZodType>(path: string, schema: Schema, run: (apiKey: string, input: z.infer<Schema>) => Promise<{ body: Record<string, unknown>; usage?: unknown }>) {

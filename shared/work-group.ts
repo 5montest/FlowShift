@@ -24,7 +24,7 @@ export const workClassificationResponseSchema = z.object({
 // WorkGroupは観測（WorkObservation）そのもの＋グルーピング情報。
 // 同じ6フィールドを二重定義しない。下書き（session draft）の検証にも使うためschema化している。
 export const workGroupSchema = workObservationSchema.omit({ sourceGroupId: true }).extend({
-  id: z.string().min(1).max(1100),
+  id: z.string().min(1).max(1200),
   category: workCategorySchema,
   recurringEventId: z.string().min(1).max(1024).optional(),
 }).strict()
@@ -40,6 +40,26 @@ export function toObservation(group: WorkGroup): WorkObservation {
     lastOccurredAt: group.lastOccurredAt,
     recurring: group.recurring,
     sourceGroupId: group.id,
+    ...(group.sourceCalendarName ? { sourceCalendarName: group.sourceCalendarName } : {}),
+  }
+}
+
+// 他カレンダー由来のグループIDは`cal:<encodeURIComponent(calendarId)>|`で名前空間を分ける。
+// 自分のカレンダーは接頭辞なし（既存の下書き・保存済み仮説と互換）。
+// 接頭辞の有無がそのまま「どのカレンダー由来か」の記録になる（sourceGroupIdに透過する）。
+export function calendarGroupKey(calendarId: string): string {
+  return `cal:${encodeURIComponent(calendarId)}|`
+}
+
+// グループid（またはsourceGroupId）からカレンダーidを取り出す。自分のカレンダーはnull
+export function calendarKeyOfGroupId(id: string | undefined): string | null {
+  if (!id?.startsWith('cal:')) return null
+  const separator = id.indexOf('|')
+  if (separator < 0) return null
+  try {
+    return decodeURIComponent(id.slice(4, separator))
+  } catch {
+    return id.slice(4, separator)
   }
 }
 
@@ -73,14 +93,16 @@ export function applyCategories(groups: WorkGroup[], categories: Record<string, 
   })
 }
 
-export function groupCalendarEvents(events: CalendarEvent[]): WorkGroup[] {
+// otherCalendar指定時（共有カレンダーの分析）はIDへ名前空間接頭辞を付け、表示名を各グループに刻む
+export function groupCalendarEvents(events: CalendarEvent[], otherCalendar?: { id: string; name: string }): WorkGroup[] {
   const grouped = new Map<string, CalendarEvent[]>()
+  const prefix = otherCalendar ? calendarGroupKey(otherCalendar.id) : ''
 
   for (const event of events) {
     if (event.allDay || event.durationMinutes <= 0) continue
-    const key = event.recurringEventId
+    const key = prefix + (event.recurringEventId
       ? `recurring:${event.recurringEventId}`
-      : `title:${normalizeWorkTitle(event.title)}`
+      : `title:${normalizeWorkTitle(event.title)}`)
     const current = grouped.get(key) ?? []
     current.push(event)
     grouped.set(key, current)
@@ -101,6 +123,7 @@ export function groupCalendarEvents(events: CalendarEvent[]): WorkGroup[] {
       ...(recurringEventId ? { recurringEventId } : {}),
       recurring: Boolean(recurringEventId),
       category: categorizeWork(ordered[0].title),
+      ...(otherCalendar ? { sourceCalendarName: otherCalendar.name } : {}),
     }
   }).sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
 }
@@ -132,6 +155,8 @@ export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iter
   const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
   const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
     && !isLikelyPersonal(group.title)
+    // 非公開予定はタイトルが取れず「予定」に集約され巨大グループ化するため声かけしない
+    && normalizeWorkTitle(group.title) !== '予定'
     && group.category !== '休憩・私用'
     && ((group.occurrences >= 3 && group.recurring) || (group.occurrences >= 2 && group.totalMinutes >= 120)))
   const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)

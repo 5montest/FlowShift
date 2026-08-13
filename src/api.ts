@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { calendarEventsResponseSchema, calendarStatusSchema, type CalendarEventsResponse, type CalendarStatus } from '../shared/calendar-schema'
+import { calendarEventsResponseSchema, calendarListResponseSchema, calendarStatusSchema, type CalendarEventsResponse, type CalendarListResponse, type CalendarStatus } from '../shared/calendar-schema'
 import {
   businessDesignSchema,
   businessTaskSchema,
@@ -91,8 +91,13 @@ export async function getGoogleCalendarStatus(): Promise<CalendarStatus> {
   return requestJson('/api/google/status', calendarStatusSchema)
 }
 
-export async function getGoogleCalendarEvents(): Promise<CalendarEventsResponse> {
-  return requestJson('/api/calendar/events', calendarEventsResponseSchema)
+export async function getGoogleCalendarEvents(calendarId?: string): Promise<CalendarEventsResponse> {
+  const query = calendarId ? `?${new URLSearchParams({ calendarId })}` : ''
+  return requestJson(`/api/calendar/events${query}`, calendarEventsResponseSchema)
+}
+
+export async function getCalendarList(): Promise<CalendarListResponse> {
+  return requestJson('/api/calendar/list', calendarListResponseSchema)
 }
 
 export async function disconnectGoogleCalendar(): Promise<void> {

@@ -10,6 +10,7 @@ import {
   type DesignOutput,
   type InterviewPlan,
   type InterviewRequest,
+  type WorkObservation,
 } from '../shared/design-schema.ts'
 import { finalizeBusinessTask } from '../shared/interview.ts'
 import { profileSummaryLine, type UserProfile } from '../shared/profile-schema.ts'
@@ -218,6 +219,13 @@ function withProfile(prompt: string, profile: UserProfile | undefined): string {
   return line ? `${line}\n${prompt}` : prompt
 }
 
+// 共有カレンダー（他人の業務）の分析では、回答が本人でなく閲覧者の理解であることを毎回伝える。
+// observationのsourceCalendarNameの有無が閲覧者モードの判定
+function withObserverNote(prompt: string, sourceCalendarName: string | undefined): string {
+  if (!sourceCalendarName) return prompt
+  return `この業務は「${sourceCalendarName}」のカレンダーを、閲覧者（上司・同僚）が本人に代わって分析しています。回答は本人ではなく閲覧者の理解として扱い、断定を避けて推測はassumptions側へ寄せてください。質問を作る場合は「分かる範囲で」答えられる形にしてください。validationPlanを作る場合は、仮説を本人へ確認する項目（STAKEHOLDER_REVIEWなど）を必ず1件含めてください。\n${prompt}`
+}
+
 const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カレンダーの予定タイトルだけを手がかりに、各タイトルを次の7分類のいずれか1つへ割り当てます。ユーザー情報があれば、その職種で一般的な業務を優先して解釈し、所定労働時間外や休みの日らしい予定は休憩・私用の可能性を考慮してください。
 - 会議: 定例・打ち合わせ・1on1・面談など、人が同期的に集まる予定
 - 資料作成: レポート・提案書・ドキュメントなどの作成
@@ -234,14 +242,14 @@ export async function classifyWork(apiKey: string, titles: string[], profile?: U
   return generateJson(apiKey, withProfile(classifyWorkPrompt, profile), { titles }, workClassificationResponseSchema, 4000)
 }
 
-export async function createInterviewOptions(apiKey: string, input: { observation: unknown; profile?: UserProfile }): Promise<DeepSeekResult<InterviewPlan>> {
-  return generateJson(apiKey, withProfile(interviewOptionsPrompt, input.profile), { observation: input.observation }, interviewPlanSchema, 2600)
+export async function createInterviewOptions(apiKey: string, input: { observation: WorkObservation; profile?: UserProfile }): Promise<DeepSeekResult<InterviewPlan>> {
+  return generateJson(apiKey, withObserverNote(withProfile(interviewOptionsPrompt, input.profile), input.observation.sourceCalendarName), { observation: input.observation }, interviewPlanSchema, 2600)
 }
 
 export async function createFollowUpQuestions(apiKey: string, businessTask: BusinessTask): Promise<DeepSeekResult<InterviewPlan>> {
   // 4問×最大6選択肢のmeaningを含むと2200トークンでは途中で切れて
   // invalid_jsonになることがあるため、余裕を持たせる
-  return generateJson(apiKey, followUpPrompt, { provisionalBusinessTask: businessTask }, interviewPlanSchema, 3600)
+  return generateJson(apiKey, withObserverNote(followUpPrompt, businessTask.observed.sourceCalendarName), { provisionalBusinessTask: businessTask }, interviewPlanSchema, 3600)
 }
 
 // 回答忠実性の不変条件だけを決定論で保証する：
@@ -289,7 +297,7 @@ function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput
 }
 
 export async function createBusinessDesign(apiKey: string, businessTask: BusinessTask, profile?: UserProfile): Promise<DeepSeekResult<DesignOutput>> {
-  const result = await generateJson(apiKey, withProfile(designPromptFor(businessTask), profile), { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
+  const result = await generateJson(apiKey, withObserverNote(withProfile(designPromptFor(businessTask), profile), businessTask.observed.sourceCalendarName), { approvedBusinessTask: businessTask }, designOutputSchemaFor(businessTask))
   return { ...result, value: finalizeBusinessDesign(businessTask, result.value) }
 }
 

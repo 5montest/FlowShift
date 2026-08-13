@@ -556,6 +556,13 @@ img.account-chip { object-fit: cover; }
 .decomposition-fold > summary small { color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); font-weight: 600; }
 .decomposition-fold .work-decomposition { margin: 0 0 8px; padding-top: 0; border-top: 0; border-bottom: 0; }
 
+/* カレンダー切替（自分＋共有カレンダー） */
+.calendar-switcher { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 20px; padding: 12px 16px; border: 1px solid var(--fs-color-border-medium); background: var(--fs-color-surface); }
+.calendar-switcher label { display: flex; align-items: center; gap: 10px; font-size: var(--fs-type-dense-size); font-weight: 800; }
+.calendar-switcher select { min-height: 40px; padding: 6px 10px; color: var(--fs-color-text); border: 1px solid var(--fs-color-border-control); border-radius: var(--fs-radius-sm); background: var(--fs-color-surface); font-size: var(--fs-type-compact-size); font-weight: 600; max-width: min(360px, 60vw); }
+.calendar-switcher-hint, .calendar-switcher-note { color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); line-height: 1.6; }
+.calendar-switcher-note { flex-basis: 100%; }
+
 /* Workspace notices and reconnect */
 .workspace-notice { display: flex; align-items: center; gap: 9px; margin: 0 0 20px; padding: 14px 16px; color: var(--fs-color-brand-hover); border-left: 4px solid var(--fs-color-brand); background: var(--fs-color-brand-soft); font-size: var(--fs-type-compact-size); font-weight: 750; }
 .workspace-notice svg { flex: 0 0 auto; }

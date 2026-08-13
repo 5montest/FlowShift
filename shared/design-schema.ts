@@ -18,8 +18,12 @@ export const workObservationSchema = z.object({
   firstOccurredAt: z.string().datetime({ offset: true }),
   lastOccurredAt: z.string().datetime({ offset: true }),
   recurring: z.boolean(),
-  // 削減トラッキングで直近のWorkGroupと突き合わせるための出所id（旧データには無い）
-  sourceGroupId: z.string().trim().min(1).max(600).optional(),
+  // 削減トラッキングで直近のWorkGroupと突き合わせるための出所id（旧データには無い）。
+  // 他カレンダー由来は`cal:<encodedCalendarId>|`接頭辞が付くため長めに取る
+  sourceGroupId: z.string().trim().min(1).max(1200).optional(),
+  // 他人（共有カレンダー）の業務を分析している場合のカレンダー表示名。
+  // 有無が「閲覧者モード」（回答＝本人でなく閲覧者の理解）の判定に使われる
+  sourceCalendarName: z.string().trim().min(1).max(500).optional(),
 }).strict()
 
 export const contextStateSchema = z.enum(['CONFIRMED', 'PARTIAL', 'UNKNOWN'])

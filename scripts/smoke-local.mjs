@@ -25,6 +25,9 @@ assert.equal(calendarStatus.connected, false)
 const calendarEventsResponse = await fetch(`${baseUrl}/api/calendar/events`)
 assert.ok([401, 503].includes(calendarEventsResponse.status), `Unauthenticated calendar request returned ${calendarEventsResponse.status}`)
 
+const calendarListResponse = await fetch(`${baseUrl}/api/calendar/list`)
+assert.ok([401, 503].includes(calendarListResponse.status), `Unauthenticated calendar list request returned ${calendarListResponse.status}`)
+
 const disconnectResponse = await fetch(`${baseUrl}/api/google/disconnect`, { method: 'POST' })
 assert.equal(disconnectResponse.status, 403, 'Calendar disconnect must reject a missing Origin header')
 

@@ -7,6 +7,7 @@ import { computeReduction, normalizeWorkTitle, rankDiscoveryCandidates, summariz
 import { draftProgressLabel } from '../lib/drafts'
 import { formatMinutes, formatPeriod } from '../lib/format'
 import { projectStatusLabels } from '../lib/labels'
+import type { CalendarEntry } from '../../shared/calendar-schema'
 import type { ImprovementProject, SessionDraft, WorkGroup } from '../types'
 
 type CalendarRange = { timeMin: string; timeMax: string } | null
@@ -18,7 +19,7 @@ const categoryIcons: Record<string, typeof Users> = {
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 進行中の仮説・採用済み仮説の削減）を置く。
-export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork, onAddWork, onRemoveManualWork }: {
+export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, calendars, viewingCalendar, calendarListHint, onSelectCalendar, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork, onAddWork, onRemoveManualWork }: {
   groups: WorkGroup[]
   projects: ImprovementProject[]
   drafts: SessionDraft[]
@@ -38,6 +39,10 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
   onUnmuteWork: (title: string) => void
   onAddWork: () => void
   onRemoveManualWork: (id: string) => void
+  calendars: CalendarEntry[]
+  viewingCalendar: CalendarEntry | null
+  calendarListHint: string
+  onSelectCalendar: (entry: CalendarEntry | null) => void
 }) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [detailGroup, setDetailGroup] = useState<WorkGroup | null>(null)
@@ -71,19 +76,31 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
     return <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{isManualWork(group) && '・手動登録'}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}{mutedWork.has(normalizeWorkTitle(group.title)) && '・声かけ対象外'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>
   }
 
+  const viewingOther = Boolean(viewingCalendar && !viewingCalendar.primary)
+
   return <main className="dashboard-main">
     {savedNotice && <p className="workspace-notice" role="status"><Check size={18} />{savedNotice}</p>}
+    {(calendars.length > 1 || calendarListHint) && <div className="calendar-switcher">
+      <label>表示中のカレンダー
+        <select value={viewingCalendar?.id ?? ''} disabled={busy} onChange={(event) => onSelectCalendar(calendars.find((entry) => entry.id === event.target.value) ?? null)}>
+          <option value="">自分のカレンダー</option>
+          {calendars.filter((entry) => !entry.primary).map((entry) => <option key={entry.id} value={entry.id}>{entry.summary}</option>)}
+        </select>
+      </label>
+      {calendarListHint && <span className="calendar-switcher-hint">{calendarListHint}</span>}
+      {viewingOther && <span className="calendar-switcher-note">回答はあなたの理解として記録され、仮説の検証で本人に確認します。予定のタイトルは分析のためAIへ送信されます。</span>}
+    </div>}
     {needsReconnect && <section className="reconnect-banner" role="alert"><div><strong>Googleとの接続が切れました</strong><p>再接続すると続きから使えます。下書きや保存済みの仮説はそのまま残ります。</p></div><button type="button" className="primary-button" onClick={onReconnect}>再接続する</button></section>}
     <section className="opening-block" aria-label="アプリからの声かけ">
       {busy && !groups.length ? <>
         <p className="opening-observation"><LoaderCircle size={18} className="animate-spin" /> カレンダーを読み込んでいます…</p>
       </> : focus ? <>
         <p className="opening-observation">
-          <CalendarSearch size={18} />過去4週間のカレンダーを見ると、{mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}</span>)}行っています。
+          <CalendarSearch size={18} />{viewingOther ? `${viewingCalendar?.summary}のカレンダー` : '過去4週間のカレンダー'}を見ると、{mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}</span>)}{viewingOther ? '行われています。' : '行っています。'}
         </p>
         {draftIds.has(focus.id)
           ? <p className="opening-ask">「{focus.title}」の続きから再開できます。前回の回答はそのまま残っています。</p>
-          : <p className="opening-ask">まず「{focus.title}」について、実際には何をしているか教えてください。3つの質問に答えると、この業務の整理ができます。</p>}
+          : <p className="opening-ask">まず「{focus.title}」について、{viewingOther ? '分かる範囲で教えてください' : '実際には何をしているか教えてください'}。3つの質問に答えると、この業務の整理ができます。</p>}
         <div className="opening-actions">
           <button type="button" className="primary-button" onClick={() => onStartSession(focus)}>{draftIds.has(focus.id) ? `「${focus.title}」の続きから答える` : `${focus.title}について答える`}<ArrowRight size={20} /></button>
           <details className="work-picker"><summary>別の業務から始める</summary>
@@ -106,7 +123,7 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
             <div className="work-picker-list">{groups.map(pickerRow)}</div>
           </details> : <>
             <p className="opening-empty">カレンダーに時間のある予定（終日以外）が登録されると、ここから始められます。</p>
-            <button type="button" className="secondary-button" onClick={onAddWork}><Plus size={18} />カレンダーに載らない業務を追加する</button>
+            {!viewingOther && <button type="button" className="secondary-button" onClick={onAddWork}><Plus size={18} />カレンダーに載らない業務を追加する</button>}
           </>}
         </div>
       </>}
@@ -123,7 +140,7 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
       </div>)}</div>
     </section>}
     <div className="dashboard-grid">
-      <section className="work-breakdown"><header className="breakdown-header"><div><h2><ChartColumnBig size={18} className="heading-icon" />業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{groups.some(isManualWork) ? '（手動登録の業務を含む）' : ''}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><div className="breakdown-actions"><button type="button" className="secondary-button" onClick={onAddWork}><Plus size={16} />業務を追加</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}><RefreshCw size={16} className={busy ? 'animate-spin' : undefined} />{busy ? '更新中' : 'カレンダーを更新'}</button></div></header>
+      <section className="work-breakdown"><header className="breakdown-header"><div><h2><ChartColumnBig size={18} className="heading-icon" />業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{groups.some(isManualWork) ? '（手動登録の業務を含む）' : ''}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><div className="breakdown-actions">{!viewingOther && <button type="button" className="secondary-button" onClick={onAddWork}><Plus size={16} />業務を追加</button>}<button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}><RefreshCw size={16} className={busy ? 'animate-spin' : undefined} />{busy ? '更新中' : 'カレンダーを更新'}</button></div></header>
         {categories.length ? <div className="category-bars">{categories.map(([category, minutes]) => <div key={category} className="category-row">
           <button type="button" className="category-bar" aria-pressed={selectedCategory === category} aria-expanded={selectedCategory === category} onClick={() => setSelectedCategory((current) => current === category ? null : category)}><span>{(() => { const Icon = categoryIcons[category]; return Icon ? <Icon size={16} /> : null })()}{category}</span><i><b style={{ width: `${Math.max(6, Math.round(minutes / maxCategoryMinutes * 100))}%` }} /></i><strong>{formatMinutes(minutes)}</strong></button>
           {selectedCategory === category && <div className="category-drilldown">{categoryGroups.map((group) => <button key={group.id} type="button" onClick={() => setDetailGroup(group)}><span><strong>{group.title}</strong><small>{group.occurrences}回 / 4週間{isManualWork(group) && '・手動登録'}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}</small></span><span>{formatMinutes(group.totalMinutes)}</span><ArrowRight size={18} /></button>)}</div>}
