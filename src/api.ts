@@ -137,12 +137,13 @@ export async function createImprovementProject(design: BusinessDesign): Promise<
 }
 
 export async function updateImprovementProjectStatus(id: string, status: ProjectStatus): Promise<ImprovementProject> {
-  const result = await postJson(`/api/projects/${encodeURIComponent(id)}/status`, { status }, projectResponseSchema, 'PATCH')
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, { action: 'status', status }, projectResponseSchema, 'PATCH')
   return result.project
 }
 
 export async function updateImprovementProject(id: string, design: BusinessDesign, revisionSummary?: string): Promise<ImprovementProject> {
   const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
+    action: 'proposal',
     proposal: design,
     ...(revisionSummary ? { revisionSummary } : {}),
   }, projectResponseSchema, 'PATCH')
@@ -150,7 +151,8 @@ export async function updateImprovementProject(id: string, design: BusinessDesig
 }
 
 export async function updateImprovementProjectContext(id: string, pendingContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
-  const result = await postJson(`/api/projects/${encodeURIComponent(id)}/context`, {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
+    action: 'context',
     pendingContext,
     revisionSummary,
   }, projectResponseSchema, 'PATCH')

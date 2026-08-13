@@ -2,8 +2,16 @@
 
 FlowShiftは、本人が持つ業務知識を質問で引き出し、構造化し、AI時代の別の設計可能性を検証するためのAX設計支援ツールです。
 
+「何かRPAにしたい仕事はありますか？」と聞かれても現場は答えられません。だからFlowShiftが先に話しかけます。
+
 ```text
-発見 → コンテクスト収集 → 構造化 → 再設計仮説 → 検証 → 人が判断
+過去4週間のカレンダーを見ると、
+売上レポート作成を4回（合計3時間）行っています。
+まず「売上レポート作成」について、実際には何をしているか教えてください。
+```
+
+```text
+声かけ（発見） → 質問に答える（理解） → 内容を確認 → 再設計仮説 → 検証 → 人が判断
 ```
 
 Google Calendarは業務を理解するデータではなく、質問を始める索引として使います。予定の頻度だけから、業務の廃止や自動化を断定しません。
@@ -12,12 +20,13 @@ Google Calendarは業務を理解するデータではなく、質問を始め�
 
 - 過去28日分のCalendar取得、ページネーション、定例予定IDの保持
 - 定例予定IDと正規化タイトルによる決定論的なWorkGroup集約
-- 4週間の業務傾向と、観測事実に基づくDiscovery Dashboard
-- 業務に応じた選択式ヒアリングと自由入力
-- 目的、関係者、工程、判断、例外、制約、依存関係、リスク、成果物の構造化
-- 項目別の「確認済み・一部確認・未確認」表示
-- Facts / Assumptions / Unknownsを分離した条件付き再設計仮説
-- 内容に応じた検証計画と、人による採用・保留・却下
+- ワークスペース最上部の「声かけ」：繰り返し業務を選定し、アプリから質問を始める（質問は表示中に先読み）
+- 選択式の質問カード（意味を機械的に保持）と自由入力のエスケープ
+- 回答のたびに決定論で更新される業務モデル（確認済み・一部確認・未確認）
+- 追加質問とLLM整理は確認画面の裏で非同期実行（ブロッキングのAI待ちは仮説生成の1回だけ）
+- Facts / Assumptions / Unknownsを分離した条件付き再設計仮説（段階表示）
+- 検証ノート：未確認事項への回答、仮説更新、採用・保留・却下
+- 採用した仮説の削減トラッキング（保存時点と直近4週間のカレンダー実測の比較）
 - ユーザーが確認した改善プロジェクトだけをD1へ保存
 - Google OAuth、暗号化トークン、ハッシュ化セッション
 - Cloudflare Workers、Hono、React、Vite、Zod
@@ -38,7 +47,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-`predev`がローカル用secretを生成し、D1 migrationを適用します。Google認証情報がない場合もデモは利用できます。
+`predev`がローカル用secretを生成し、D1 migrationを適用します。
 
 ## データの扱い
 
@@ -53,9 +62,10 @@ npm.cmd run dev
 ## 検証
 
 ```powershell
-npm.cmd run workgroups:check
+npm.cmd run check        # 決定論ロジックの回帰テスト（WorkGroup・回答忠実性・プロジェクトv1→v2・業務分解）
 npm.cmd run build
-npm.cmd run smoke
+npm.cmd run smoke:http   # devサーバー起動中に。認証境界とOriginの検査（AIキー不要）
+npm.cmd run smoke        # devサーバー起動中に。実LLM込みの通し検査
 npm.cmd run secret:check
 npm.cmd run cf:dry-run
 ```
@@ -64,7 +74,7 @@ npm.cmd run cf:dry-run
 
 ## CI/CD
 
-`.github/workflows/ci-cd.yml`はPull Requestで型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。
+`.github/workflows/ci-cd.yml`はPull Requestで回帰テスト（`npm run check`）・型・ビルド・secret混入を検証し、`main`へのマージ後にD1 migrationとCloudflare Workersへのデプロイを実行します。
 
 GitHubの`production` environmentには次だけを設定します。
 
@@ -78,12 +88,18 @@ GitHubの`production` environmentには次だけを設定します。
 ```text
 migrations/                  D1 schema
 shared/calendar-schema.ts    Calendar API schema
-shared/work-group.ts         WorkGroupの決定論的集約
-shared/design-schema.ts      業務コンテクスト・仮説・検証schema
-shared/project-schema.ts     保存する改善プロジェクトschema
-src/App.tsx                  Dashboardと設計フロー
+shared/work-group.ts         WorkGroup集約・声かけ候補の選定・削減の計算
+shared/design-schema.ts      業務コンテクスト・仮説・検証schema（文脈次元が唯一の定義）
+shared/project-schema.ts     改善プロジェクトschema（v1→v2読み時アップグレード含む）
+shared/context-questions.ts  決定論的な質問カタログ（フォールバック・情報追加）
+shared/interview.ts          回答meaningを正本とする決定論的な構造化
+shared/demo-fixtures.ts      チェックスクリプト用フィクスチャ
+src/App.tsx                  状態シェル（セッションflow・先読みキャッシュ）
+src/screens/                 connect / workspace / session / hypothesis / note の5画面
+src/components/              QuestionCard・WorkDecomposition など共有部品
 src/api.ts                   ブラウザからWorker APIへの通信
+worker/deepseek.ts           LLM呼び出し（プロンプト形式はZodから生成）
 worker/google-calendar.ts    OAuth、暗号化Token、Calendar取得
-worker/index.ts              API routesと認証ガード
+worker/index.ts              API routes（テーブル駆動AIルート・統合PATCH）
 wrangler.jsonc               Worker、D1、secret設定
 ```

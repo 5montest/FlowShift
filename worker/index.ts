@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
-import { createProjectRequestSchema, improvementProjectSchema, parseStoredProject, projectListSchema, projectName, updateProjectContextRequestSchema, updateProjectProposalRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
+import { createProjectRequestSchema, improvementProjectSchema, parseStoredProject, projectListSchema, projectName, updateProjectRequestSchema, type ImprovementProject } from '../shared/project-schema'
 import { createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
   clearGoogleOAuthCookie,
@@ -15,7 +16,9 @@ import {
   listGoogleCalendarEvents,
 } from './google-calendar'
 
-const app = new Hono<{ Bindings: Env }>()
+type GoogleSession = NonNullable<Awaited<ReturnType<typeof getGoogleSession>>>
+
+const app = new Hono<{ Bindings: Env; Variables: { session: GoogleSession | null } }>()
 const projectStatusLabels = { DRAFT: '下書き', VALIDATING: '検証中', ADOPTED: '採用', REJECTED: '却下', ON_HOLD: '保留' } as const
 
 function isLocalRequest(request: Request): boolean {
@@ -32,12 +35,22 @@ function errorResponse(code: string, message: string, requestId: string, status:
   return Response.json({ error: { code, message, requestId, ...(details ? { details } : {}) } }, { status })
 }
 
+// ブラウザからの変更系リクエストに共通のガード（Origin・サイズ）
+function mutationGuard(c: { req: { raw: Request; url: string; header: (name: string) => string | undefined } }, requestId: string): Response | null {
+  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
+  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
+  return null
+}
+
 const aiPaths = new Set(['/api/interview-options', '/api/follow-up-questions', '/api/business-task', '/api/design'])
 
+// セッションはここで一度だけ解決し、各ルートはc.get('session')を読む
 app.use('/api/*', async (c, next) => {
   const path = new URL(c.req.url).pathname
   const needsSession = aiPaths.has(path) || path.startsWith('/api/projects')
-  if (needsSession && !isLocalRequest(c.req.raw) && !(await getGoogleSession(c.req.raw, c.env))) {
+  const session = needsSession ? await getGoogleSession(c.req.raw, c.env) : null
+  c.set('session', session)
+  if (needsSession && !isLocalRequest(c.req.raw) && !session) {
     return c.json({ error: { code: 'authentication_required', message: 'Google Calendarを接続してください。' } }, 401)
   }
   await next()
@@ -81,8 +94,9 @@ app.get('/api/google/callback', async (c) => {
 })
 
 app.post('/api/google/disconnect', async (c) => {
+  const requestId = crypto.randomUUID()
   if (c.req.header('Origin') !== new URL(c.req.url).origin) {
-    return errorResponse('invalid_origin', 'リクエスト元を確認できません。', crypto.randomUUID(), 403)
+    return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
   }
   await disconnectGoogleCalendar(c.req.raw, c.env)
   return new Response(null, {
@@ -93,68 +107,38 @@ app.post('/api/google/disconnect', async (c) => {
 
 app.get('/api/calendar/events', async (c) => c.json(await listGoogleCalendarEvents(c.req.raw, c.env), 200, { 'Cache-Control': 'no-store' }))
 
-app.post('/api/interview-options', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-
-  const body = await c.req.json<unknown>().catch(() => null)
-  const input = interviewOptionsRequestSchema.safeParse(body)
-  if (!input.success) return errorResponse('invalid_request', 'Interview option input is invalid.', requestId, 400)
-
-  const result = await createInterviewOptions(c.env.DEEPSEEK_API_KEY, input.data)
-  return c.json({
-    options: result.value,
-    meta: { requestId, model: deepSeekModel, usage: result.usage },
+// 4つのAIルートは同じ形（サイズ検査→検証→呼び出し→meta付き応答）。テーブル駆動で1本化。
+function aiRoute<Schema extends z.ZodType>(path: string, schema: Schema, run: (apiKey: string, input: z.infer<Schema>) => Promise<{ body: Record<string, unknown>; usage?: unknown }>) {
+  app.post(path, async (c) => {
+    const requestId = crypto.randomUUID()
+    if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
+    const body = await c.req.json<unknown>().catch(() => null)
+    const input = schema.safeParse(body)
+    if (!input.success) return errorResponse('invalid_request', '入力内容を確認できませんでした。', requestId, 400)
+    const result = await run(c.env.DEEPSEEK_API_KEY, input.data)
+    return c.json({ ...result.body, meta: { requestId, model: deepSeekModel, usage: result.usage } })
   })
+}
+
+aiRoute('/api/interview-options', interviewOptionsRequestSchema, async (apiKey, input) => {
+  const result = await createInterviewOptions(apiKey, input)
+  return { body: { options: result.value }, usage: result.usage }
 })
-
-app.post('/api/business-task', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-
-  const body = await c.req.json<unknown>().catch(() => null)
-  const input = interviewRequestSchema.safeParse(body)
-  if (!input.success) return errorResponse('invalid_request', 'Interview input is invalid.', requestId, 400)
-
-  const result = await extractBusinessTask(c.env.DEEPSEEK_API_KEY, input.data)
-  return c.json({
-    businessTask: result.value,
-    meta: { requestId, model: deepSeekModel, usage: result.usage },
-  })
+aiRoute('/api/business-task', interviewRequestSchema, async (apiKey, input) => {
+  const result = await extractBusinessTask(apiKey, input)
+  return { body: { businessTask: result.value }, usage: result.usage }
 })
-
-app.post('/api/follow-up-questions', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-
-  const body = await c.req.json<unknown>().catch(() => null)
-  const input = followUpRequestSchema.safeParse(body)
-  if (!input.success) return errorResponse('invalid_request', 'BusinessTask input is invalid.', requestId, 400)
-
-  const result = await createFollowUpQuestions(c.env.DEEPSEEK_API_KEY, input.data.businessTask)
-  return c.json({
-    plan: result.value,
-    meta: { requestId, model: deepSeekModel, usage: result.usage },
-  })
+aiRoute('/api/follow-up-questions', followUpRequestSchema, async (apiKey, input) => {
+  const result = await createFollowUpQuestions(apiKey, input.businessTask)
+  return { body: { plan: result.value }, usage: result.usage }
 })
-
-app.post('/api/design', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-
-  const body = await c.req.json<unknown>().catch(() => null)
-  const input = designRequestSchema.safeParse(body)
-  if (!input.success) return errorResponse('invalid_request', 'BusinessTask input is invalid.', requestId, 400)
-
-  const result = await createBusinessDesign(c.env.DEEPSEEK_API_KEY, input.data.businessTask)
-  return c.json({
-    design: { businessTask: input.data.businessTask, ...result.value },
-    meta: { requestId, model: deepSeekModel, usage: result.usage },
-  })
+aiRoute('/api/design', designRequestSchema, async (apiKey, input) => {
+  const result = await createBusinessDesign(apiKey, input.businessTask)
+  return { body: { design: { businessTask: input.businessTask, ...result.value } }, usage: result.usage }
 })
 
 app.get('/api/projects', async (c) => {
-  const session = await getGoogleSession(c.req.raw, c.env)
+  const session = c.get('session')
   if (!session) return c.json(projectListSchema.parse({ projects: [] }), 200, { 'Cache-Control': 'no-store' })
   const rows = await c.env.DB.prepare(
     'SELECT project_json FROM improvement_projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 200',
@@ -172,9 +156,9 @@ app.get('/api/projects', async (c) => {
 
 app.post('/api/projects', async (c) => {
   const requestId = crypto.randomUUID()
-  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-  const session = await getGoogleSession(c.req.raw, c.env)
+  const guarded = mutationGuard(c, requestId)
+  if (guarded) return guarded
+  const session = c.get('session')
   if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
   const body = await c.req.json<unknown>().catch(() => null)
   const input = createProjectRequestSchema.safeParse(body)
@@ -195,80 +179,14 @@ app.post('/api/projects', async (c) => {
   return c.json({ project }, 201, { 'Cache-Control': 'no-store' })
 })
 
-app.patch('/api/projects/:id/status', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
-  const session = await getGoogleSession(c.req.raw, c.env)
-  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
-  const input = updateProjectStatusRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
-  if (!input.success) return errorResponse('invalid_request', 'Project status input is invalid.', requestId, 400)
-
-  const row = await c.env.DB.prepare(
-    'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
-  ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
-  if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = parseStoredProject(JSON.parse(row.project_json))
-  if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
-  const now = new Date()
-  const project = improvementProjectSchema.parse({
-    ...current,
-    status: input.data.status,
-    history: [...current.history, {
-      id: crypto.randomUUID(),
-      type: 'STATUS_UPDATED',
-      summary: `状態を「${projectStatusLabels[input.data.status]}」へ変更`,
-      createdAt: now.toISOString(),
-    }],
-    updatedAt: now.toISOString(),
-  })
-  await c.env.DB.prepare(
-    'UPDATE improvement_projects SET status = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(project.status, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
-  return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
-})
-
-app.patch('/api/projects/:id/context', async (c) => {
-  const requestId = crypto.randomUUID()
-  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-  const session = await getGoogleSession(c.req.raw, c.env)
-  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
-  const input = updateProjectContextRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
-  if (!input.success) return errorResponse('invalid_request', 'Business context input is invalid.', requestId, 400)
-
-  const row = await c.env.DB.prepare(
-    'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
-  ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
-  if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = parseStoredProject(JSON.parse(row.project_json))
-  if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
-
-  const now = new Date()
-  const project = improvementProjectSchema.parse({
-    ...current,
-    pendingContext: input.data.pendingContext,
-    history: [...current.history, {
-      id: crypto.randomUUID(),
-      type: 'CONTEXT_UPDATED',
-      summary: input.data.revisionSummary,
-      createdAt: now.toISOString(),
-    }],
-    updatedAt: now.toISOString(),
-  })
-  await c.env.DB.prepare(
-    'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(projectName(project), JSON.stringify(project), now.getTime(), project.id, session.userId).run()
-  return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
-})
-
 app.patch('/api/projects/:id', async (c) => {
   const requestId = crypto.randomUUID()
-  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
-  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
-  const session = await getGoogleSession(c.req.raw, c.env)
+  const guarded = mutationGuard(c, requestId)
+  if (guarded) return guarded
+  const session = c.get('session')
   if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
-  const input = updateProjectProposalRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
-  if (!input.success) return errorResponse('invalid_request', 'ImprovementProject input is invalid.', requestId, 400)
+  const input = updateProjectRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
+  if (!input.success) return errorResponse('invalid_request', 'Project update input is invalid.', requestId, 400)
 
   const row = await c.env.DB.prepare(
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
@@ -278,22 +196,38 @@ app.patch('/api/projects/:id', async (c) => {
   if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
 
   const now = new Date()
-  // 仮説を更新したら、反映待ちの業務コンテクストは解消される
-  const { pendingContext: _resolved, ...rest } = current
-  const project = improvementProjectSchema.parse({
-    ...rest,
-    proposal: input.data.proposal,
-    history: [...current.history, {
-      id: crypto.randomUUID(),
-      type: 'HYPOTHESIS_UPDATED',
-      summary: input.data.revisionSummary ?? '追加した業務情報を反映して仮説を更新',
-      createdAt: now.toISOString(),
-    }],
-    updatedAt: now.toISOString(),
-  })
+  const history = (type: 'STATUS_UPDATED' | 'CONTEXT_UPDATED' | 'HYPOTHESIS_UPDATED', summary: string) => [
+    ...current.history,
+    { id: crypto.randomUUID(), type, summary, createdAt: now.toISOString() },
+  ]
+  let project: ImprovementProject
+  if (input.data.action === 'status') {
+    project = improvementProjectSchema.parse({
+      ...current,
+      status: input.data.status,
+      history: history('STATUS_UPDATED', `状態を「${projectStatusLabels[input.data.status]}」へ変更`),
+      updatedAt: now.toISOString(),
+    })
+  } else if (input.data.action === 'context') {
+    project = improvementProjectSchema.parse({
+      ...current,
+      pendingContext: input.data.pendingContext,
+      history: history('CONTEXT_UPDATED', input.data.revisionSummary),
+      updatedAt: now.toISOString(),
+    })
+  } else {
+    // 仮説を更新したら、反映待ちの業務コンテクストは解消される
+    const { pendingContext: _resolved, ...rest } = current
+    project = improvementProjectSchema.parse({
+      ...rest,
+      proposal: input.data.proposal,
+      history: history('HYPOTHESIS_UPDATED', input.data.revisionSummary ?? '追加した業務情報を反映して仮説を更新'),
+      updatedAt: now.toISOString(),
+    })
+  }
   await c.env.DB.prepare(
-    'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(projectName(project), JSON.stringify(project), now.getTime(), project.id, session.userId).run()
+    'UPDATE improvement_projects SET task_name = ?, status = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+  ).bind(projectName(project), project.status, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
 })
 

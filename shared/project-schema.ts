@@ -28,19 +28,12 @@ export const createProjectRequestSchema = z.object({
   proposal: businessDesignSchema,
 }).strict()
 
-export const updateProjectProposalRequestSchema = z.object({
-  proposal: businessDesignSchema,
-  revisionSummary: z.string().trim().min(1).max(500).optional(),
-}).strict()
-
-export const updateProjectContextRequestSchema = z.object({
-  pendingContext: businessTaskSchema,
-  revisionSummary: z.string().trim().min(1).max(500),
-}).strict()
-
-export const updateProjectStatusRequestSchema = z.object({
-  status: projectStatusSchema,
-}).strict()
+// 3種類あったPATCHを1本に。actionで更新の種類を判別する。
+export const updateProjectRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('status'), status: projectStatusSchema }).strict(),
+  z.object({ action: z.literal('context'), pendingContext: businessTaskSchema, revisionSummary: z.string().trim().min(1).max(500) }).strict(),
+  z.object({ action: z.literal('proposal'), proposal: businessDesignSchema, revisionSummary: z.string().trim().min(1).max(500).optional() }).strict(),
+])
 
 export const projectListSchema = z.object({
   projects: z.array(improvementProjectSchema).max(200),

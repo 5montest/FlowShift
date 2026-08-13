@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { improvementProjectSchema, parseStoredProject, projectContext, projectName, updateProjectContextRequestSchema } from '../shared/project-schema.ts'
+import { improvementProjectSchema, parseStoredProject, projectContext, projectName, updateProjectRequestSchema } from '../shared/project-schema.ts'
 import { createDemoDesign, initialBusinessTask } from '../shared/demo-fixtures.ts'
 
 const proposal = createDemoDesign(initialBusinessTask)
@@ -18,12 +18,16 @@ assert.equal(project.pendingContext, undefined)
 assert.equal(projectName(project), '朝会')
 assert.equal(projectContext(project), project.proposal.businessTask)
 
-const contextUpdate = updateProjectContextRequestSchema.parse({
+const contextUpdate = updateProjectRequestSchema.parse({
+  action: 'context',
   pendingContext: initialBusinessTask,
   revisionSummary: '相談機能は別途必要と確認',
 })
+assert.equal(contextUpdate.action, 'context')
 assert.equal(contextUpdate.revisionSummary, '相談機能は別途必要と確認')
 assert.equal(contextUpdate.pendingContext.deliveryModel.synchronousRole, 'UNKNOWN')
+const statusUpdate = updateProjectRequestSchema.parse({ action: 'status', status: 'ADOPTED' })
+assert.equal(statusUpdate.status, 'ADOPTED')
 
 const withPending = improvementProjectSchema.parse({ ...project, pendingContext: initialBusinessTask })
 assert.equal(projectContext(withPending), withPending.pendingContext)
