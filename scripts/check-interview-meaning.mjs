@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { businessTaskDraftSchemaFor, businessTaskSchema } from '../shared/design-schema.ts'
 import { finalizeBusinessTask } from '../shared/interview.ts'
 
 const observation = {
@@ -89,5 +90,13 @@ const concreteStakeholderAnswer = {
 const concreteStakeholders = finalizeBusinessTask(observation, [concreteStakeholderAnswer], contradictoryDraft)
 assert.equal(concreteStakeholders.contextStatus.stakeholders, 'CONFIRMED')
 assert.deepEqual(concreteStakeholders.stakeholders, ['チームメンバー', 'チーム責任者'])
+
+// 目的文のスタイルガード：ユーザーの語彙に含まれる成果物名は許可し、含まれなければ拒否する。
+// 保存データ検証（businessTaskSchema）には語のガードを掛けない（読み込みで落とさない）。
+const mailPurposeDraft = { ...contradictoryDraft, purpose: '顧客からの問い合わせメールに漏れなく答え、対応状況を把握する' }
+assert.ok(businessTaskDraftSchemaFor('問い合わせメール対応\n毎日メールを確認して返信する').safeParse(mailPurposeDraft).success, 'topic words from user vocabulary must be allowed in purpose')
+assert.ok(!businessTaskDraftSchemaFor('朝会\n予定を共有する').safeParse(mailPurposeDraft).success, 'artifact words outside user vocabulary must be rejected')
+assert.ok(businessTaskDraftSchemaFor('朝会').safeParse(contradictoryDraft).success)
+assert.ok(businessTaskSchema.safeParse({ ...task, purpose: '問い合わせメールに答えて顧客の状況を把握する' }).success, 'stored tasks must never be dropped for purpose wording')
 
 console.log('Interview meaning fidelity checks passed')

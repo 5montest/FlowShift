@@ -5,10 +5,10 @@ const shortText = z.string().trim().min(1).max(240)
 const sentence = z.string().trim().min(1).max(800)
 const textList = z.array(shortText).max(12)
 
-const purposeText = sentence.refine(
-  (value) => value === '未確認' || !/(レポート|報告書|資料|メール|Excel|PowerPoint)/i.test(value),
-  '目的には成果物名やツール名を含めず、誰が何を把握・判断・達成するかだけを記述してください。',
-)
+// 目的文から成果物名・ツール名を排除するスタイルガードは、生成時にだけ動的に適用する
+// （businessTaskDraftSchemaForを参照）。保存済みデータの検証には使わない：一律禁止を
+// businessTaskSchemaに入れると、業務自体がこれらの語を含む場合（メール対応等）に
+// 生成が毎回失敗し、保存済みプロジェクトの読み込みまで落ちる。
 
 export const workObservationSchema = z.object({
   title: z.string().trim().min(1).max(500),
@@ -141,7 +141,7 @@ export const deliveryModelSchema = z.object({
 
 export const businessTaskDraftSchema = z.object({
   name: shortText,
-  purpose: purposeText,
+  purpose: sentence,
   frequency: shortText,
   duration: shortText,
   trigger: shortText,
@@ -168,6 +168,23 @@ export const businessTaskDraftSchema = z.object({
   }),
   contextStatus: contextStatusSchema,
 }).strict()
+
+const PURPOSE_ARTIFACT_WORDS = ['レポート', '報告書', '資料', 'メール', 'Excel', 'PowerPoint']
+
+// LLM出力検証用：目的文に成果物名・ツール名を書かせないスタイルガード。
+// ただしユーザー自身の語彙（業務タイトル・回答文）に含まれる語は業務の実体なので許可する。
+export function businessTaskDraftSchemaFor(contextText: string) {
+  const lowered = contextText.toLowerCase()
+  const banned = PURPOSE_ARTIFACT_WORDS.filter((word) => !lowered.includes(word.toLowerCase()))
+  if (!banned.length) return businessTaskDraftSchema
+  const pattern = new RegExp(`(${banned.join('|')})`, 'i')
+  return businessTaskDraftSchema.extend({
+    purpose: sentence.refine(
+      (value) => value === '未確認' || !pattern.test(value),
+      '目的には成果物名やツール名を含めず、誰が何を把握・判断・達成するかだけを記述してください。',
+    ),
+  })
+}
 
 export const businessTaskSchema = businessTaskDraftSchema.extend({
   observed: workObservationSchema,

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   businessTaskDraftSchema,
+  businessTaskDraftSchemaFor,
   designOutputSchema,
   designOutputSchemaFor,
   interviewPlanSchema,
@@ -191,7 +192,9 @@ ${schemaInstruction(designOutputSchema)}`
 }
 
 export async function extractBusinessTask(apiKey: string, input: InterviewRequest): Promise<DeepSeekResult<BusinessTask>> {
-  const result = await generateJson<BusinessTaskDraft>(apiKey, businessTaskPrompt, input, businessTaskDraftSchema)
+  // ユーザーの語彙に含まれる成果物名（メール対応等）は目的文でも許可する（design-schema参照）
+  const contextText = [input.observation.title, ...input.answers.map((answer) => answer.answer)].join('\n')
+  const result = await generateJson<BusinessTaskDraft>(apiKey, businessTaskPrompt, input, businessTaskDraftSchemaFor(contextText))
   return { ...result, value: finalizeBusinessTask(input.observation, input.answers, result.value) }
 }
 

@@ -290,6 +290,8 @@ app.onError((error, c) => {
     requestId,
     path: new URL(c.req.url).pathname,
     errorCode: deepSeekError || googleError ? error.code : 'internal',
+    // スキーマ検証の失敗箇所が分からないと再発時に調査できないため、詳細も残す（回答本文は含まれない）
+    ...(deepSeekError && error.details?.length ? { details: error.details.slice(0, 10) } : {}),
   }))
 
   if (deepSeekError) return errorResponse(error.code, '整理に失敗しました。もう一度お試しください。', requestId, 502, [error.message, ...(error.details ?? [])])
