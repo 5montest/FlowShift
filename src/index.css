@@ -540,6 +540,13 @@ img.account-chip { object-fit: cover; }
 .session-qa .custom-answer-toggle { margin-top: auto; }
 .session-qa .answer-input { flex: 0 0 auto; max-height: 30dvh; }
 .session-qa .interview-form .primary-button { flex: 0 0 auto; }
+.qa-progress small { margin-left: 4px; color: var(--fs-color-text-muted); font-weight: 600; }
+.qa-waiting { display: flex; flex: 1 1 auto; align-items: center; gap: 14px; padding: 24px 0; }
+.qa-waiting svg { flex: 0 0 auto; color: var(--fs-color-brand); }
+.qa-waiting strong { font-size: var(--fs-type-body-size); }
+.qa-waiting p { margin: 6px 0 0; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); line-height: 1.6; }
+.qa-escape { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; margin: 10px 0 0; }
+.qa-escape .text-button { text-decoration: underline; text-underline-offset: 3px; }
 @media (max-height: 560px) { .session-qa { height: auto; min-height: 480px; overflow: visible; } }
 
 /* Confirming screen density */

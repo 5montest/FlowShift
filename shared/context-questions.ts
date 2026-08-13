@@ -1,4 +1,16 @@
-import type { ContextDimension, InterviewPlan } from './design-schema.ts'
+import type { BusinessTask, ContextDimension, InterviewPlan, InterviewQuestion } from './design-schema.ts'
+
+// 連続インタビューの質問数上限（CORE3問＋追加質問）
+export const QUESTION_BUDGET = 9
+
+// LLMの追加質問生成（実測20秒前後）を待つ間に出す「つなぎ質問」。
+// 判断保留の3大原因（制約・依存関係・リスク）のうちUNKNOWNの次元のカタログ質問を即時に返す。
+export function bridgeQuestionsFor(contextStatus: BusinessTask['contextStatus'], excludeDimensions: Iterable<string> = []): InterviewQuestion[] {
+  const excluded = new Set(excludeDimensions)
+  return (['constraints', 'dependencies', 'risks'] as const)
+    .filter((key) => contextStatus[key] === 'UNKNOWN' && !excluded.has(key))
+    .map((key) => questionForContext(key).questions[0])
+}
 
 // contextStatusのキーごとに用意した決定論的な追加質問カタログ。
 // LLM生成の追加質問が使えないときのフォールバック、および「情報を追加」導線の供給源。

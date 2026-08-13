@@ -6,7 +6,7 @@ import QuestionDialog from '../components/QuestionDialog'
 import SummaryItem from '../components/SummaryItem'
 import ToolTitle from '../components/ToolTitle'
 import WorkDecomposition from '../components/WorkDecomposition'
-import { questionForContext } from '../../shared/context-questions'
+import { QUESTION_BUDGET, questionForContext } from '../../shared/context-questions'
 import { formatMinutes } from '../lib/format'
 import { contextLabels, deliveryLabels } from '../lib/labels'
 import { useAsyncAction } from '../lib/useAsync'
@@ -22,7 +22,7 @@ type SessionDialog =
 
 // 「聞く」と「確認する」を1画面で行う。Q&Aは1ビューポートに収まり、
 // 確認モードは主要CTAが下部バーに常時見えている。
-export default function SessionScreen({ group, plan, planSource, answers, task, pendingQuestions, askedQuestions, refining, onAnswer, onRetryRefine, onProceed }: {
+export default function SessionScreen({ group, plan, planSource, answers, task, pendingQuestions, askedQuestions, refining, interviewComplete, onAnswer, onRetryRefine, onProceed }: {
   group: WorkGroup
   plan: InterviewPlan | null
   planSource: 'ai' | 'generic' | null
@@ -31,6 +31,7 @@ export default function SessionScreen({ group, plan, planSource, answers, task, 
   pendingQuestions: InterviewQuestion[]
   askedQuestions: InterviewQuestion[]
   refining: boolean
+  interviewComplete: boolean
   onAnswer: (answer: InterviewAnswer) => void
   onRetryRefine: () => void
   onProceed: () => Promise<void>
@@ -40,8 +41,10 @@ export default function SessionScreen({ group, plan, planSource, answers, task, 
   const { status, errorMessage, run } = useAsyncAction('仮説を作成できませんでした。')
   const answeredIds = new Set(answers.map((answer) => answer.questionId))
   const firstUnanswered = plan?.questions.find((question) => !answeredIds.has(question.id))
-  const answeredInPlan = plan?.questions.filter((item) => answeredIds.has(item.id)).length ?? 0
-  const confirming = Boolean(plan) && !firstUnanswered
+  const coreDone = Boolean(plan) && !firstUnanswered
+  // CORE完了後もインタビューが終わるまではQ&A面のまま続ける（現在の質問＝CORE残り→キュー先頭）
+  const currentQuestion = firstUnanswered ?? (!interviewComplete ? pendingQuestions[0] : undefined)
+  const confirming = coreDone && interviewComplete
   const counts = task ? countStates(task) : null
 
   function questionFor(answer: InterviewAnswer): InterviewQuestion {
@@ -85,7 +88,7 @@ export default function SessionScreen({ group, plan, planSource, answers, task, 
       <header className="qa-header">
         <div className="qa-header-top">
           <h1>{group.title}</h1>
-          <span className="qa-progress">質問 {Math.min(answeredInPlan + 1, plan.questions.length)} / {plan.questions.length}</span>
+          <span className="qa-progress">質問 {Math.min(answers.length + 1, QUESTION_BUDGET)}<small>（あと最大{Math.max(0, QUESTION_BUDGET - answers.length - 1)}問）</small></span>
         </div>
         <p className="qa-meta">
           <span>4週間で{group.occurrences}回・合計{formatMinutes(group.totalMinutes)}</span>
@@ -94,7 +97,10 @@ export default function SessionScreen({ group, plan, planSource, answers, task, 
         </p>
         {planSource === 'generic' && <p className="plan-source-note">この業務専用の質問を用意できなかったため、一般的な質問から始めています。</p>}
       </header>
-      {firstUnanswered && <QuestionCard key={firstUnanswered.id} question={firstUnanswered} submitLabel={answeredInPlan + 1 === plan.questions.length ? '回答を整理する' : '次へ'} onSubmit={onAnswer} />}
+      {currentQuestion
+        ? <QuestionCard key={currentQuestion.id} question={currentQuestion} submitLabel="次へ" onSubmit={onAnswer} />
+        : <div className="qa-waiting" aria-live="polite"><LoaderCircle className="animate-spin" /><div><strong>回答を整理して、次の質問を準備しています</strong><p>未確認の項目が残っていれば続けて質問します。ここまでの内容で仮説へ進むこともできます。</p></div></div>}
+      {coreDone && <p className="qa-escape"><button type="button" className="text-button" disabled={status === 'loading'} onClick={() => void run(onProceed)}>{status === 'loading' ? '仮説を準備中…' : 'ここまでの内容で仮説を見る'}</button>{status === 'error' && <span className="calendar-error" role="alert">{errorMessage}</span>}</p>}
       {sessionDialogs}
     </main>
   }

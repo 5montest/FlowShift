@@ -157,6 +157,7 @@ ${schemaInstruction(interviewPlanSchema)}`
 const followUpPrompt = `あなたはFlowShiftのAdaptive Interview設計役です。暫定BusinessTaskを確認し、再設計判断を左右するCritical Unknownだけを追加質問にします。
 phaseはFOLLOW_UP、質問数は0〜4問です。確認済みの内容を聞き直さず、制約・例外・業務の隠れた役割・他部署への影響・変更リスクのうち、仮説を変え得るものだけを選んでください。十分ならquestionsを空配列にします。
 contextStatusでconstraints・dependencies・risksがUNKNOWNのものは採用判断を止める最重要事項です。UNKNOWNが残っていれば、その次元の質問を必ず1問以上含めてください。
+すでに回答で確認済み（CONFIRMED）の次元は、回答をさらに深掘りする必要がある場合を除き、再度質問しないでください。
 各質問には3〜6個の選択肢を付けます。「情報がある／ない」ではなく内容を聞いてください。関係者は具体的な対象をmeaning.stakeholders、現在工程は具体的な行為をmeaning.processItemsへ保存し、複数該当する質問はselectionをMULTIPLEにします。役割はmeaning.rolesへ具体名、present、scope（ALL | PARTIAL | CONDITIONAL | UNKNOWN）、必要ならscopeDetailを保存します。「まだ分からない」はcontextStateをUNKNOWNにします。
 存在だけ分かって具体的な対象が分からない場合、その項目をCONFIRMEDにしないでください。
 リスク（dimension=risks）の選択肢には、誤りの影響の大きさをmeaning.failureCost（HIGH / LOW）で付けてください。他の次元にはfailureCostを付けません。

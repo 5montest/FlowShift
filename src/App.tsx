@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fallbackCorePlan } from '../shared/context-questions'
+import { bridgeQuestionsFor, fallbackCorePlan, QUESTION_BUDGET } from '../shared/context-questions'
 import { createDeterministicTask } from '../shared/interview'
 import { projectContext, projectName } from '../shared/project-schema'
 import { applyCategories, groupCalendarEvents, mergeWorkGroups, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
@@ -65,13 +65,24 @@ type SessionFlow = {
   pendingQuestions: InterviewQuestion[]
   askedQuestions: InterviewQuestion[]
   refining: boolean
+  // 連続インタビューの進行状態：完了で確認画面へ。roundsは追加質問生成の実行回数
+  interviewComplete: boolean
+  followUpRounds: number
   design: BusinessDesign | null
   designError: string
 }
 
 const emptyFlow: SessionFlow = {
   group: null, plan: null, planSource: null, answers: [], task: null, refinedTask: null,
-  pendingQuestions: [], askedQuestions: [], refining: false, design: null, designError: '',
+  pendingQuestions: [], askedQuestions: [], refining: false, interviewComplete: false, followUpRounds: 0, design: null, designError: '',
+}
+
+// 追加質問の生成ラウンド上限。QUESTION_BUDGET（合計9問）はshared/context-questions.tsに定義
+const MAX_FOLLOWUP_ROUNDS = 2
+
+// handleAnswerは同じquestionIdを上書きするためanswersはquestionIdユニーク
+function criticalUnknownRemains(task: BusinessTask | null): boolean {
+  return !task || (['constraints', 'dependencies', 'risks'] as const).some((key) => task.contextStatus[key] === 'UNKNOWN')
 }
 
 function mergeQuestions(current: InterviewQuestion[], added: InterviewQuestion[]): InterviewQuestion[] {
@@ -133,6 +144,8 @@ export default function App() {
       answers: flow.answers,
       pendingQuestions: flow.pendingQuestions,
       askedQuestions: flow.askedQuestions,
+      interviewComplete: flow.interviewComplete,
+      followUpRounds: flow.followUpRounds,
       task: flow.task,
       refinedTask: flow.refinedTask,
       design: flow.design,
@@ -264,11 +277,17 @@ export default function App() {
         refinedTask: draft.refinedTask,
         pendingQuestions: draft.pendingQuestions,
         askedQuestions: mergeQuestions(draft.askedQuestions, draft.plan.questions),
+        // 仮説まで作っていた下書きはインタビュー完了として扱う（旧下書きの自然な移行）
+        interviewComplete: draft.interviewComplete || Boolean(draft.design),
+        followUpRounds: draft.followUpRounds,
         design: draft.design,
       })
       setScreen('session')
       const coreDone = draft.plan.questions.every((question) => draft.answers.some((answer) => answer.questionId === question.id))
-      if (coreDone && !draft.design && draft.pendingQuestions.length === 0) void refineInBackground(freshGroup, draft.answers)
+      if (coreDone && !draft.design && !draft.interviewComplete && draft.pendingQuestions.length === 0
+        && draft.followUpRounds < MAX_FOLLOWUP_ROUNDS && draft.answers.length < QUESTION_BUDGET) {
+        void refineInBackground(freshGroup, draft.answers)
+      }
       return
     }
     setFlow({ ...emptyFlow, group })
@@ -295,15 +314,37 @@ export default function App() {
       const nextAnswers = [...current.answers.filter((item) => item.questionId !== answer.questionId), answer]
       const provisional = buildProvisionalTask(current.group, nextAnswers)
       const nextTask = provisional ? (current.refinedTask ? mergeRefined(current.refinedTask, provisional) : provisional) : current.task
-      const coreDone = current.plan.questions.every((question) => nextAnswers.some((item) => item.questionId === question.id))
-      if (coreDone && current.plan.questions.some((question) => question.id === answer.questionId)) {
+      const nextPending = current.pendingQuestions.filter((question) => question.id !== answer.questionId)
+      const coreJustDone = current.plan.questions.every((question) => nextAnswers.some((item) => item.questionId === question.id))
+        && current.plan.questions.some((question) => question.id === answer.questionId)
+
+      let pendingQuestions = nextPending
+      let askedQuestions = current.askedQuestions
+      let interviewComplete = current.interviewComplete
+      if (coreJustDone) {
+        // 裏で整理＋追加質問生成（ラウンド1）を開始しつつ、生成待ちの間は
+        // 決定論カタログのつなぎ質問（制約・依存・リスク）を即時に出す
+        const bridges = nextTask
+          ? bridgeQuestionsFor(nextTask.contextStatus).filter((question) => !nextAnswers.some((item) => item.questionId === question.id))
+          : []
+        pendingQuestions = mergeQuestions(nextPending, bridges)
+        askedQuestions = mergeQuestions(current.askedQuestions, bridges)
         void refineInBackground(current.group, nextAnswers)
+      } else if (!interviewComplete && nextPending.length === 0 && !current.refining) {
+        // キューが空になった：残ラウンド・残予算・重要次元のUNKNOWNが揃えば次ラウンド、でなければ完了
+        if (current.followUpRounds < MAX_FOLLOWUP_ROUNDS && nextAnswers.length < QUESTION_BUDGET && criticalUnknownRemains(nextTask)) {
+          void refineInBackground(current.group, nextAnswers)
+        } else {
+          interviewComplete = true
+        }
       }
       return {
         ...current,
         answers: nextAnswers,
         task: nextTask,
-        pendingQuestions: current.pendingQuestions.filter((question) => question.id !== answer.questionId),
+        pendingQuestions,
+        askedQuestions,
+        interviewComplete,
         // 回答が増えたら生成済み仮説は古くなるので破棄（次に進むとき再生成）
         design: null,
         designError: '',
@@ -311,7 +352,7 @@ export default function App() {
     })
   }
 
-  // コア回答後、確認モードを読んでいる裏でLLMに整理と追加質問を任せる。
+  // 回答を裏でLLMに整理させ、次ラウンドの追加質問を生成する（ユーザーはつなぎ質問に回答中）。
   // 失敗してもフローは止めない（taskがnullのままの場合だけSessionScreenが再試行を出す）。
   async function refineInBackground(group: WorkGroup, nextAnswers: InterviewAnswer[]) {
     const token = sessionToken.current
@@ -323,15 +364,40 @@ export default function App() {
         baseTask = await extractBusinessTask(nextAnswers, group)
         if (sessionToken.current !== token) return
         const refined = baseTask
-        setFlow((current) => ({ ...current, refinedTask: refined, task: refined }))
+        setFlow((current) => {
+          // 整理中につなぎ質問へ回答が進んでいることがあるため、最新の回答の決定論を上に重ねる
+          const provisionalNow = current.group ? buildProvisionalTask(current.group, current.answers) : null
+          return { ...current, refinedTask: refined, task: provisionalNow ? mergeRefined(refined, provisionalNow) : refined }
+        })
       }
       const followUp = await generateFollowUpPlan(baseTask)
       if (sessionToken.current !== token) return
-      const answeredIds = new Set(nextAnswers.map((answer) => answer.questionId))
-      const fresh = followUp.questions.filter((question) => !answeredIds.has(question.id))
-      setFlow((current) => ({ ...current, pendingQuestions: fresh, askedQuestions: mergeQuestions(current.askedQuestions, fresh) }))
+      setFlow((current) => {
+        // 到着時点の最新状態で重複を排除する：回答済みid・CORE以外で回答済みの次元（つなぎ質問と
+        // 同じ次元の生成質問を落とす）・保留中の次元。予算の残りに収まる分だけ採用する
+        const answeredIds = new Set(current.answers.map((item) => item.questionId))
+        const coreIds = new Set(current.plan?.questions.map((question) => question.id) ?? [])
+        const postCoreDimensions = new Set(current.answers.filter((item) => !coreIds.has(item.questionId)).map((item) => item.dimension))
+        const pendingDimensions = new Set(current.pendingQuestions.map((question) => question.dimension))
+        const budgetLeft = Math.max(0, QUESTION_BUDGET - current.answers.length - current.pendingQuestions.length)
+        const fresh = followUp.questions
+          .filter((question) => !answeredIds.has(question.id) && !postCoreDimensions.has(question.dimension) && !pendingDimensions.has(question.dimension))
+          .slice(0, budgetLeft)
+        return {
+          ...current,
+          pendingQuestions: mergeQuestions(current.pendingQuestions, fresh),
+          askedQuestions: mergeQuestions(current.askedQuestions, fresh),
+          followUpRounds: current.followUpRounds + 1,
+          // 新しい質問が無くキューも空なら、このラウンドでインタビューを終える
+          interviewComplete: current.interviewComplete || (fresh.length === 0 && current.pendingQuestions.length === 0),
+        }
+      })
     } catch {
-      // 追加質問なしで進められる。未確認の項目は仮説側がunknownsとして明示する。
+      // 追加質問なしで進められる。キューが空なら完了扱いにして確認画面へ進める
+      // （未確認の項目は仮説側がunknownsとして明示する）
+      if (sessionToken.current === token) {
+        setFlow((current) => ({ ...current, interviewComplete: current.interviewComplete || current.pendingQuestions.length === 0 }))
+      }
     } finally {
       if (sessionToken.current === token) setFlow((current) => ({ ...current, refining: false }))
     }
@@ -356,6 +422,8 @@ export default function App() {
   async function proceedToHypothesis() {
     const { group, task, answers, design } = flow
     if (!group) return
+    // 仮説へ進む＝インタビュー終了（早期離脱を含む）。残りの未確認は検証条件になる
+    setFlow((current) => ({ ...current, interviewComplete: true }))
     const finalTask = task ?? await extractBusinessTask(answers, group)
     setFlow((current) => ({ ...current, task: finalTask }))
     setScreen('hypothesis')
@@ -544,7 +612,7 @@ export default function App() {
     <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} email={calendar.connected ? calendar.email : undefined} picture={calendar.connected ? calendar.picture : undefined} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} onOpenProfile={() => setShowProfileDialog(true)} onDisconnect={() => void disconnect()} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
     {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onAddWork={() => setShowAddWork(true)} onRemoveManualWork={handleRemoveManualWork} />}
-    {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
+    {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} interviewComplete={flow.interviewComplete} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}
     {showProfileDialog && calendar.connected && <ProfileDialog profile={profile} onSave={handleSaveProfile} onSkip={handleSkipProfile} />}

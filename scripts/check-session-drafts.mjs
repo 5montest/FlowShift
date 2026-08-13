@@ -33,11 +33,19 @@ assert.ok(roundTripped.design)
 const minimalDraft = { ...fullDraft, answers: fullDraft.answers.slice(0, 1), pendingQuestions: [], task: null, refinedTask: null, design: null }
 assert.ok(parseDraft(JSON.parse(JSON.stringify(minimalDraft)), now), 'minimal draft must parse')
 
-// askedQuestionsを持たない旧下書きは空配列で補われる（後方互換）
+// askedQuestions・interviewComplete・followUpRoundsを持たない旧下書きはdefaultで補われる（後方互換）
 const { askedQuestions: _asked, ...legacyDraft } = fullDraft
 const upgradedDraft = parseDraft(JSON.parse(JSON.stringify(legacyDraft)), now)
 assert.ok(upgradedDraft, 'draft without askedQuestions must still parse')
 assert.deepEqual(upgradedDraft.askedQuestions, [])
+assert.equal(upgradedDraft.interviewComplete, false)
+assert.equal(upgradedDraft.followUpRounds, 0)
+
+// 連続インタビューの進行状態がラウンドトリップで保持されること
+const continuedDraft = parseDraft(JSON.parse(JSON.stringify({ ...fullDraft, interviewComplete: true, followUpRounds: 2 })), now)
+assert.ok(continuedDraft)
+assert.equal(continuedDraft.interviewComplete, true)
+assert.equal(continuedDraft.followUpRounds, 2)
 
 // 期限切れ・バージョン違い・未知キー・plan欠落は静かにnull
 const expired = { ...fullDraft, updatedAt: new Date(now - SESSION_DRAFT_TTL_MS - 24 * 60 * 60 * 1000).toISOString() }

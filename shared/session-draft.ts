@@ -13,7 +13,11 @@ export const sessionDraftSchema = z.object({
   // 回答が存在する時点でplanは必ず読込済み（handleAnswerの前提）なので必須
   plan: interviewPlanSchema,
   answers: z.array(interviewAnswerSchema).max(20),
-  pendingQuestions: z.array(interviewQuestionSchema).max(4),
+  // つなぎ質問（最大3）とLLM追加質問（最大4）が同時に並ぶことがある
+  pendingQuestions: z.array(interviewQuestionSchema).max(9),
+  // 連続インタビューの進行状態。旧下書きには無いためdefaultで補う
+  interviewComplete: z.boolean().default(false),
+  followUpRounds: z.number().int().min(0).max(10).default(0),
   // 回答済みの質問も「修正」で再表示できるよう、出題した質問を保持する。
   // 旧下書きには無いためdefaultで補う。
   askedQuestions: z.array(interviewQuestionSchema).max(40).default([]),

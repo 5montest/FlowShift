@@ -144,7 +144,9 @@ assert.ok(
   roleRegex.test(designResult.design?.redesign?.hypothesis ?? '') || roleRegex.test(designResult.design?.redesign?.roleNote ?? ''),
   'confirmed role must be stated in hypothesis or roleNote',
 )
-assert.ok(!designResult.design?.analysis?.unknowns?.some((item) => item.includes('相談')))
+// 確認済みの役割がunknownsへ落ちないこと（finalizeBusinessDesignの決定論フィルタは役割名で除外する。
+// 固定語「相談」での検査はLLMの役割命名に依存して不安定だったため、実際の不変条件に合わせる）
+assert.ok(!designResult.design?.analysis?.unknowns?.some((item) => item.includes(confirmedRoleName)), 'confirmed role must not appear in unknowns')
 assert.equal(typeof designResult.design?.redesign?.hypothesis, 'string')
 assert.ok(designResult.design?.analysis?.unknowns?.length > 0)
 assert.ok(designResult.design?.validationPlan?.items?.length > 0)
