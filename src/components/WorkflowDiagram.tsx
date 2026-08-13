@@ -1,4 +1,4 @@
-import type { WorkflowStepInput } from '../shared/design-schema'
+import type { WorkflowStepInput } from '../../shared/design-schema'
 
 type Props = {
   steps: WorkflowStepInput[]

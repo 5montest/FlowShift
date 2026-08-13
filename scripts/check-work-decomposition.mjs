@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { decomposeBusinessTask, proposedTreatment } from '../shared/work-decomposition.ts'
-import { demoProject } from '../src/demo-data.ts'
+import { demoProject } from '../shared/demo-fixtures.ts'
 
 const components = decomposeBusinessTask(demoProject.businessContext)
 const byKind = new Map(components.map((component) => [component.kind, component]))

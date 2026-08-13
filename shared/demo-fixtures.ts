@@ -1,6 +1,10 @@
-import { createDeterministicTask } from '../shared/interview.ts'
-import type { BusinessDesign, BusinessTask, ContextDimension, ImprovementProject, InterviewAnswer, InterviewPlan, InterviewQuestion, WorkObservation } from './types'
-import type { WorkGroup } from '../shared/work-group'
+import type { BusinessDesign, BusinessTask, ContextDimension, InterviewAnswer, InterviewPlan, WorkObservation } from './design-schema.ts'
+import { createDeterministicTask } from './interview.ts'
+import type { ImprovementProject } from './project-schema.ts'
+import type { WorkGroup } from './work-group.ts'
+
+// チェックスクリプト（scripts/check-*.mjs）用の決定論的フィクスチャ。
+// アプリ本体はデモモードを持たないため、ここを参照するのはテストだけ。
 
 export const demoWorkGroups: WorkGroup[] = [
   {
@@ -64,7 +68,7 @@ export const demoInterviewPlan: InterviewPlan = {
   ],
 }
 
-export function observationFromDemoGroup(group: WorkGroup): WorkObservation {
+function observationFromDemoGroup(group: WorkGroup): WorkObservation {
   return {
     title: group.title,
     occurrences: group.occurrences,
@@ -74,69 +78,6 @@ export function observationFromDemoGroup(group: WorkGroup): WorkObservation {
     lastOccurredAt: group.lastOccurredAt,
     recurring: group.evidence.recurring,
   }
-}
-
-function roleQuestion(id: string, roleName: string, prompt: string, hint: string): InterviewQuestion {
-  return {
-    id, dimension: 'roles', phase: 'FOLLOW_UP', prompt, hint,
-    options: [
-      { id: `${id}-yes`, label: `${roleName}の役割がある`, meaning: { roles: [{ name: roleName, present: true, scope: 'ALL' }], contextState: 'CONFIRMED' } },
-      { id: `${id}-no`, label: `${roleName}の役割はない`, meaning: { roles: [{ name: roleName, present: false, scope: 'ALL' }], contextState: 'CONFIRMED' } },
-      { id: `${id}-partial`, label: '一部の回や参加者にだけ当てはまる', meaning: { roles: [{ name: roleName, present: true, scope: 'PARTIAL', scopeDetail: '一部の回または参加者のみ' }], contextState: 'PARTIAL' } },
-      { id: `${id}-unknown`, label: 'まだ確認できていない', meaning: { roles: [], contextState: 'UNKNOWN' } },
-    ],
-  }
-}
-
-function stakeholderQuestion(): InterviewQuestion {
-  return {
-    id: 'follow-stakeholders', dimension: 'stakeholders', phase: 'FOLLOW_UP', selection: 'MULTIPLE',
-    prompt: '朝会に参加する人と、共有結果を使う人を選んでください。',
-    hint: '分かる範囲で複数選べます。具体的な対象が分からない場合は「まだ分からない」を選びます。',
-    options: [
-      { id: 'stakeholder-team', label: 'チームメンバー', meaning: { roles: [], stakeholders: ['チームメンバー'], contextState: 'CONFIRMED' } },
-      { id: 'stakeholder-lead', label: 'チーム責任者', meaning: { roles: [], stakeholders: ['チーム責任者'], contextState: 'CONFIRMED' } },
-      { id: 'stakeholder-department', label: '他部署', meaning: { roles: [], stakeholders: ['他部署'], contextState: 'CONFIRMED' } },
-      { id: 'stakeholder-customer', label: '顧客', meaning: { roles: [], stakeholders: ['顧客'], contextState: 'CONFIRMED' } },
-      { id: 'stakeholder-unknown', label: 'まだ分からない', meaning: { roles: [], stakeholders: [], contextState: 'UNKNOWN' } },
-    ],
-  }
-}
-
-function processQuestion(): InterviewQuestion {
-  return {
-    id: 'follow-process', dimension: 'process', phase: 'FOLLOW_UP', selection: 'MULTIPLE',
-    prompt: '普段の朝会で行っていることを選んでください。',
-    hint: '実際に行うものを複数選べます。選んだ工程と役割はそのまま保存します。',
-    options: [
-      { id: 'process-share', label: '予定共有', meaning: { roles: [], processItems: ['予定共有'], contextState: 'CONFIRMED' } },
-      { id: 'process-change', label: '変更点の確認', meaning: { roles: [], processItems: ['変更点の確認'], contextState: 'CONFIRMED' } },
-      { id: 'process-consult', label: '困りごとの相談', meaning: { roles: [{ name: '困りごとの相談と担当調整', present: true, scope: 'ALL' }], processItems: ['困りごとの相談'], contextState: 'CONFIRMED' } },
-      { id: 'process-adjust', label: '担当調整', meaning: { roles: [{ name: '困りごとの相談と担当調整', present: true, scope: 'ALL' }], processItems: ['担当調整'], contextState: 'CONFIRMED' } },
-      { id: 'process-training', label: '新人への説明', meaning: { roles: [{ name: '新人教育・関係づくり', present: true, scope: 'PARTIAL', scopeDetail: '新人が参加する回のみ' }], processItems: ['新人への説明'], contextState: 'PARTIAL' } },
-      { id: 'process-unknown', label: 'まだ分からない', meaning: { roles: [], processItems: [], contextState: 'UNKNOWN' } },
-    ],
-  }
-}
-
-function simpleQuestion(id: string, dimension: ContextDimension, prompt: string, hint: string, labels: string[]): InterviewQuestion {
-  return {
-    id, dimension, phase: 'FOLLOW_UP', prompt, hint,
-    options: labels.map((label, index) => ({
-      id: `${id}-${index + 1}`,
-      label,
-      meaning: { roles: [], contextState: index === labels.length - 1 ? 'UNKNOWN' : 'CONFIRMED' },
-    })),
-  }
-}
-
-export function createDemoFollowUpPlan(task: BusinessTask): InterviewPlan {
-  const questions: InterviewQuestion[] = []
-  if (task.contextStatus.stakeholders !== 'CONFIRMED') questions.push(stakeholderQuestion())
-  if (task.contextStatus.process !== 'CONFIRMED') questions.push(processQuestion())
-  if (!task.businessRoleDetails.some((role) => role.name === '新人教育・関係づくり')) questions.push(roleQuestion('follow-training', '新人教育・関係づくり', '新人教育や、チームの関係づくりに使われていますか？', '一部の回だけ当てはまる場合も、その範囲を保って保存します。'))
-  questions.push(simpleQuestion('follow-constraint', 'constraints', '形式を変えられない制度・責任上の条件はありますか？', '毎日の報告義務や、口頭確認が必要な情報などを確認します。', ['責任者への毎日の報告が必要', '口頭でしか扱えない情報がある', '確認できている制約はない', 'まだ確認できていない']))
-  return { phase: 'FOLLOW_UP', questions: questions.slice(0, 4) }
 }
 
 function answerFrom(plan: InterviewPlan, questionIndex: number, optionIndex: number): InterviewAnswer {
@@ -241,7 +182,7 @@ export function createDemoDesign(task: BusinessTask): BusinessDesign {
       impact: { assumption: assumptions.join('。') },
     },
     validationPlan: {
-      summary: '仮説を採用する前に、未確認事項と技術条件を順に確認します。期間は検証内容に応じて決めます。',
+      summary: '仮説を採用する前に、未確認の項目と技術条件を順に確認します。期間は検証内容に応じて決めます。',
       items: [
         { type: 'REQUIREMENT_VALIDATION', title: '残すべき役割を確認', description: '参加者へ、現在の業務がなくなると失われる情報や関係性を確認します。', checks: ['予定共有以外の目的', '相談・教育の有無', '口頭でしか扱えない情報'] },
         { type: 'TECHNICAL_FEASIBILITY', title: '予定差分を取得できるか確認', description: '必要な予定と変更情報を、許可された範囲で取得できるか確認します。', checks: ['Calendar APIの権限', '予定未登録時の扱い', '通知先と情報公開範囲'] },
@@ -250,8 +191,6 @@ export function createDemoDesign(task: BusinessTask): BusinessDesign {
     },
   }
 }
-
-export const demoDesign = createDemoDesign(initialBusinessTask)
 
 const demoProjectTask = createDeterministicTask(observationFromDemoGroup(demoWorkGroups[0]), [
   answerFrom(demoInterviewPlan, 0, 0),

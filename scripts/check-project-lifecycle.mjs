@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { improvementProjectSchema, updateProjectContextRequestSchema } from '../shared/project-schema.ts'
-import { createDemoDesign, initialBusinessTask } from '../src/demo-data.ts'
+import { createDemoDesign, initialBusinessTask } from '../shared/demo-fixtures.ts'
 
 const proposal = createDemoDesign(initialBusinessTask)
 const createdAt = '2026-08-11T00:00:00.000Z'
