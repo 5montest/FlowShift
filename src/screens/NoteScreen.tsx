@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Check, TrendingDown } from 'lucide-react'
+import { Check, CircleHelp, ClipboardCheck, FlaskConical, History, Lightbulb, RefreshCw, TrendingDown } from 'lucide-react'
+import StatusBadge from '../components/StatusBadge'
 import QuestionCard from '../components/QuestionCard'
 import QuestionDialog from '../components/QuestionDialog'
 import SummaryItem from '../components/SummaryItem'
@@ -33,7 +34,7 @@ export default function NoteScreen({ project, currentGroups, onAddContext, onUpd
   const dateFormat = new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })
 
   return <main className="project-detail-main">
-    <header className="project-title"><div><span className="badge-row"><span className={`project-status status-${project.status.toLowerCase()}`}>{projectStatusLabels[project.status]}</span>{contextDirty && <span className="project-status status-dirty">更新待ち</span>}</span><h1>{projectName(project)}</h1><p>保存時点（{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.createdAt))}）：過去4週間で{context.observed.occurrences}回 / {formatMinutes(context.observed.totalMinutes)}</p></div><small>最終更新 {dateFormat.format(new Date(project.updatedAt))}</small></header>
+    <header className="project-title"><div><span className="badge-row"><StatusBadge status={project.status} />{contextDirty && <span className="project-status status-dirty"><RefreshCw size={14} />更新待ち</span>}</span><h1>{projectName(project)}</h1><p>保存時点（{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.createdAt))}）：過去4週間で{context.observed.occurrences}回 / {formatMinutes(context.observed.totalMinutes)}</p></div><small>最終更新 {dateFormat.format(new Date(project.updatedAt))}</small></header>
     {reduction && (reduction.matched
       ? <section className="reduction-banner"><TrendingDown size={20} /><div><strong>4週間 {reduction.baselineOccurrences}回/{formatMinutes(reduction.baselineMinutes)} → {reduction.currentOccurrences}回/{formatMinutes(reduction.currentMinutes)}{reduction.deltaMinutes > 0 ? `（−${formatMinutes(reduction.deltaMinutes)}）` : reduction.deltaMinutes < 0 ? `（+${formatMinutes(-reduction.deltaMinutes)}）` : '（±0）'}</strong><p>保存時点と直近4週間の、同じ業務のカレンダー実測の比較です。</p></div></section>
       : <section className="reduction-banner"><TrendingDown size={20} /><div><strong>直近4週間のカレンダーにこの業務が見当たりません</strong><p>廃止できた場合のほか、予定の名前を変えた場合や長期休暇でも表示されます。</p></div></section>)}
@@ -41,22 +42,22 @@ export default function NoteScreen({ project, currentGroups, onAddContext, onUpd
     {errorMessage && <p className="calendar-error" role="alert">{errorMessage}</p>}
     <WorkDecomposition task={context} design={project.proposal} />
     <div className="project-detail-grid">
-      <section className="project-context"><h2>現在の業務</h2><dl className="model-summary">
+      <section className="project-context"><h2><ClipboardCheck size={18} className="heading-icon" />現在の業務</h2><dl className="model-summary">
         <SummaryItem title="目的">{context.purpose}</SummaryItem>
         <SummaryItem title="人が判断すること">{context.decisionPoints.length ? <ul>{context.decisionPoints.map((item) => <li key={item}>{item}</li>)}</ul> : '未確認'}</SummaryItem>
         <SummaryItem title="関係者">{context.stakeholders.length ? context.stakeholders.join('、') : '未確認'}</SummaryItem>
         <SummaryItem title="確認済みの役割">{roleDetails.length ? <ul>{roleDetails.map((role) => <li key={role.name}>{role.name}{role.scope !== 'ALL' ? ` — ${role.scopeDetail ?? '条件付き'}` : ''}</li>)}</ul> : '未確認'}</SummaryItem>
       </dl></section>
-      <section className="project-hypothesis-panel"><h2>再設計仮説</h2><h3>{project.proposal.redesign.headline}</h3><p>{project.proposal.redesign.hypothesis}</p></section>
+      <section className="project-hypothesis-panel"><h2><Lightbulb size={18} className="heading-icon" />再設計仮説</h2><h3>{project.proposal.redesign.headline}</h3><p>{project.proposal.redesign.hypothesis}</p></section>
     </div>
-    <section className="project-unknowns"><header><h2>先に確認したいこと</h2><p>現場で分かったことを追加します。追加した内容は「仮説を更新する」で反映されます。</p></header>
+    <section className="project-unknowns"><header><h2><CircleHelp size={18} className="heading-icon" />先に確認したいこと</h2><p>現場で分かったことを追加します。追加した内容は「仮説を更新する」で反映されます。</p></header>
       {unknowns.length ? unknowns.map((unknown) => <article key={unknown.id}>
         <div><strong>{unknown.question}</strong><p>{unknown.reason}</p></div>
         <button type="button" className="secondary-button" onClick={() => setActiveUnknownId(unknown.id)}>答える</button>
       </article>) : <p className="all-resolved"><Check size={18} />表示中の未確認の項目はありません。</p>}
     </section>
-    <section className="project-validations"><header><h2>検証</h2><p>{project.proposal.validationPlan.summary}</p></header>{project.proposal.validationPlan.items.map((item) => <article key={`${item.type}-${item.title}`}><span>{validationLabels[item.type]}</span><div><strong>{item.title}</strong><p>{item.description}</p><ul>{item.checks.map((check) => <li key={check}>{check}</li>)}</ul></div></article>)}</section>
-    <section className="project-history"><h2>履歴</h2>{project.history.length ? <ol>{[...project.history].reverse().map((item) => <li key={item.id}><time>{dateFormat.format(new Date(item.createdAt))}</time><span>{item.summary}</span></li>)}</ol> : <p>履歴はまだありません。</p>}</section>
+    <section className="project-validations"><header><h2><FlaskConical size={18} className="heading-icon" />検証</h2><p>{project.proposal.validationPlan.summary}</p></header>{project.proposal.validationPlan.items.map((item) => <article key={`${item.type}-${item.title}`}><span>{validationLabels[item.type]}</span><div><strong>{item.title}</strong><p>{item.description}</p><ul>{item.checks.map((check) => <li key={check}>{check}</li>)}</ul></div></article>)}</section>
+    <section className="project-history"><h2><History size={18} className="heading-icon" />履歴</h2>{project.history.length ? <ol>{[...project.history].reverse().map((item) => <li key={item.id}><time>{dateFormat.format(new Date(item.createdAt))}</time><span>{item.summary}</span></li>)}</ol> : <p>履歴はまだありません。</p>}</section>
     <section className="project-decision"><h2>この仮説の扱い</h2><div className="decision-select">
       <p>扱いは画面下のバーからいつでも変更できます。採用にすると、この業務の時間の変化を「カレンダーを更新」のたびにワークスペースで確認できます。保留・却下・採用にした仮説は「保存した仮説をすべて見る」から開けます。却下した業務は、また声かけの候補に戻ります。</p>
       <button type="button" className="text-button delete-project" onClick={() => setConfirmAction('delete')}>この仮説を削除する</button>

@@ -234,7 +234,8 @@ img.account-chip { object-fit: cover; }
 .project-list strong, .project-list small { display: block; }
 .project-list strong { font-size: var(--fs-type-subheading-size); }
 .project-list small { margin-top: 5px; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); }
-.project-status { padding: 6px 10px; color: var(--fs-color-text-secondary); background: var(--fs-color-surface-muted); font-size: var(--fs-type-dense-size); font-weight: 800; }
+.project-status { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; color: var(--fs-color-text-secondary); background: var(--fs-color-surface-muted); font-size: var(--fs-type-dense-size); font-weight: 800; }
+.project-status svg { flex: 0 0 auto; }
 .status-adopted { color: var(--fs-color-surface); background: var(--fs-color-brand); }
 .status-draft { color: var(--fs-color-text-secondary); background: var(--fs-color-surface-muted); border: 1px solid var(--fs-color-border-medium); }
 .status-validating { color: var(--fs-color-system); background: var(--fs-color-system-soft); }
@@ -276,6 +277,8 @@ img.account-chip { object-fit: cover; }
 .result-overview { padding: 28px 0 34px; border-top: 2px solid var(--fs-color-rule); border-bottom: 1px solid var(--fs-color-border-strong); }
 .judgement { display: flex; align-items: flex-start; gap: 18px; padding: 16px 18px; border-left: 4px solid var(--fs-color-brand); background: var(--fs-color-inverse); }
 .judgement.needs-context { border-left-color: var(--fs-color-assumption); background: var(--fs-color-assumption-soft); }
+.judgement > svg { flex: 0 0 auto; margin-top: 2px; margin-right: -10px; color: var(--fs-color-brand); }
+.judgement.needs-context > svg { color: var(--fs-color-assumption); }
 .judgement strong { flex: 0 0 auto; font-size: var(--fs-type-body-size); }
 .judgement p { margin: 0; font-size: var(--fs-type-body-size); line-height: 1.7; }
 .judgement-hint { margin-top: 8px !important; color: var(--fs-color-text-secondary); font-size: var(--fs-type-dense-size); }
@@ -372,7 +375,8 @@ img.account-chip { object-fit: cover; }
 .category-bars { border-top: 2px solid var(--fs-color-rule); }
 .category-bar { display: grid; width: 100%; min-height: 58px; grid-template-columns: 110px minmax(80px, 1fr) 80px; align-items: center; gap: 16px; padding: 10px 8px; color: var(--fs-color-text); border: 0; border-bottom: 1px solid var(--fs-color-border); background: transparent; text-align: left; }
 .category-bar:hover, .category-bar[aria-pressed="true"] { background: var(--fs-color-brand-soft); }
-.category-bar span { font-size: var(--fs-type-compact-size); font-weight: 750; }
+.category-bar span { display: flex; align-items: center; gap: 7px; font-size: var(--fs-type-compact-size); font-weight: 750; }
+.category-bar span svg { flex: 0 0 auto; color: var(--fs-color-text-secondary); }
 .category-bar i { display: block; height: 10px; background: var(--fs-color-border-soft); }
 .category-bar b { display: block; height: 100%; background: var(--fs-color-brand); }
 .category-bar strong { font-size: var(--fs-type-dense-size); text-align: right; }
@@ -549,6 +553,11 @@ img.account-chip { object-fit: cover; }
 .group-detail-facts dd { margin: 0; font-size: var(--fs-type-compact-size); font-weight: 750; text-align: right; }
 .group-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .mute-toggle { min-height: 40px; margin-top: 10px; padding: 0; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); text-decoration: underline; text-underline-offset: 3px; }
+.mute-toggle svg { vertical-align: -3px; margin-right: 6px; }
+.group-detail-facts dd svg { vertical-align: -3px; margin-right: 6px; color: var(--fs-color-text-secondary); }
+
+/* 見出し・本文の意味アイコン（装飾でなく語彙の手がかり） */
+.heading-icon { vertical-align: -3px; margin-right: 8px; color: var(--fs-color-text-secondary); }
 
 /* Session extras */
 .plan-source-note { margin: 0 0 18px; padding: 10px 14px; color: var(--fs-color-text-secondary); background: var(--fs-color-assumption-soft); font-size: var(--fs-type-dense-size); line-height: 1.6; }
@@ -600,6 +609,7 @@ img.account-chip { object-fit: cover; }
   .dashboard-grid > section { padding: 22px 18px; }
   .dashboard-actions { padding: 20px 18px; }
   .category-bar { grid-template-columns: 88px minmax(60px, 1fr) 70px; gap: 10px; }
+  .category-bar span svg { display: none; }
   .project-card dl { flex-direction: column; gap: 7px; }
   .action-bar { flex-wrap: wrap; }
 }

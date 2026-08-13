@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, Check, LoaderCircle, TrendingDown } from 'lucide-react'
+import { ArrowRight, Bell, BellOff, CalendarSearch, ChartColumnBig, Check, Code, Coffee, Database, FileText, FlaskConical, Headset, LoaderCircle, PencilLine, RefreshCw, Shapes, TrendingDown, Users } from 'lucide-react'
+import StatusBadge from '../components/StatusBadge'
 import { projectContext, projectName } from '../../shared/project-schema'
 import { computeReduction, normalizeWorkTitle, rankDiscoveryCandidates, summarizeWorkGroups } from '../../shared/work-group'
 import { draftProgressLabel } from '../lib/drafts'
@@ -8,6 +9,11 @@ import { projectStatusLabels } from '../lib/labels'
 import type { ImprovementProject, SessionDraft, WorkGroup } from '../types'
 
 type CalendarRange = { timeMin: string; timeMax: string } | null
+
+// 固定7分類の見分けを速くするためのアイコン（shared/work-group.tsのタクソノミーと対応）
+const categoryIcons: Record<string, typeof Users> = {
+  '会議': Users, '資料作成': FileText, 'データ処理': Database, '顧客対応': Headset, '開発・制作': Code, '休憩・私用': Coffee, 'その他': Shapes,
+}
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 進行中の仮説・採用済み仮説の削減）を置く。
@@ -71,7 +77,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
         <p className="opening-observation"><LoaderCircle size={18} className="animate-spin" /> カレンダーを読み込んでいます…</p>
       </> : focus ? <>
         <p className="opening-observation">
-          過去4週間のカレンダーを見ると、{mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}</span>)}行っています。
+          <CalendarSearch size={18} />過去4週間のカレンダーを見ると、{mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}</span>)}行っています。
         </p>
         {draftIds.has(focus.id)
           ? <p className="opening-ask">「{focus.title}」の続きから再開できます。前回の回答はそのまま残っています。</p>
@@ -83,7 +89,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
           </details>
         </div>
       </> : allCandidates.length > 0 ? <>
-        <p className="opening-observation">繰り返しの業務は、いま仮説の検証中です。</p>
+        <p className="opening-observation"><CalendarSearch size={18} />繰り返しの業務は、いま仮説の検証中です。</p>
         <p className="opening-ask">検証を続けるか、別の業務からも始められます。</p>
         <div className="opening-actions">
           {groups.length > 0 && <details className="work-picker"><summary>別の業務から始める</summary>
@@ -91,7 +97,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
           </details>}
         </div>
       </> : <>
-        <p className="opening-observation">過去4週間のカレンダーには、繰り返しの予定が見つかりませんでした。</p>
+        <p className="opening-observation"><CalendarSearch size={18} />過去4週間のカレンダーには、繰り返しの予定が見つかりませんでした。</p>
         <p className="opening-ask">業務を1つ選んで、実際には何をしているか教えてください。</p>
         <div className="opening-actions">
           {groups.length ? <details className="work-picker" open><summary>業務を選ぶ</summary>
@@ -102,7 +108,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
     </section>
     {error && <p className="calendar-error" role="alert">{error}</p>}
     {drafts.length > 0 && <section className="session-drafts" aria-label="作業中の下書き">
-      <header><h2>作業中の下書き</h2><p>途中まで答えた業務です。このブラウザにだけ保存され、30日で自動的に消えます。</p></header>
+      <header><h2><PencilLine size={18} className="heading-icon" />作業中の下書き</h2><p>途中まで答えた業務です。このブラウザにだけ保存され、30日で自動的に消えます。</p></header>
       <div>{drafts.map((draft) => <div key={draft.group.id} className="draft-row">
         <button type="button" className="draft-resume" onClick={() => onStartSession(draft.group)}>
           <span><strong>{draft.group.title}</strong><small>{draftProgressLabel(draft)}・{timeFormat.format(new Date(draft.updatedAt))}</small></span>
@@ -112,19 +118,19 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
       </div>)}</div>
     </section>}
     <div className="dashboard-grid">
-      <section className="work-breakdown"><header className="breakdown-header"><div><h2>業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}>{busy ? '更新中' : 'カレンダーを更新'}</button></header>
+      <section className="work-breakdown"><header className="breakdown-header"><div><h2><ChartColumnBig size={18} className="heading-icon" />業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}><RefreshCw size={16} className={busy ? 'animate-spin' : undefined} />{busy ? '更新中' : 'カレンダーを更新'}</button></header>
         {categories.length ? <div className="category-bars">{categories.map(([category, minutes]) => <div key={category} className="category-row">
-          <button type="button" className="category-bar" aria-pressed={selectedCategory === category} aria-expanded={selectedCategory === category} onClick={() => setSelectedCategory((current) => current === category ? null : category)}><span>{category}</span><i><b style={{ width: `${Math.max(6, Math.round(minutes / maxCategoryMinutes * 100))}%` }} /></i><strong>{formatMinutes(minutes)}</strong></button>
+          <button type="button" className="category-bar" aria-pressed={selectedCategory === category} aria-expanded={selectedCategory === category} onClick={() => setSelectedCategory((current) => current === category ? null : category)}><span>{(() => { const Icon = categoryIcons[category]; return Icon ? <Icon size={16} /> : null })()}{category}</span><i><b style={{ width: `${Math.max(6, Math.round(minutes / maxCategoryMinutes * 100))}%` }} /></i><strong>{formatMinutes(minutes)}</strong></button>
           {selectedCategory === category && <div className="category-drilldown">{categoryGroups.map((group) => <button key={group.id} type="button" onClick={() => setDetailGroup(group)}><span><strong>{group.title}</strong><small>{group.occurrences}回 / 4週間{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}</small></span><span>{formatMinutes(group.totalMinutes)}</span><ArrowRight size={18} /></button>)}</div>}
         </div>)}</div> : <p>カレンダーの業務を取得すると内訳が表示されます。</p>}
       </section>
-      <section className="active-projects"><header><h2>進行中の仮説</h2><p>未確認の項目と、次に進める検証です。</p></header>
+      <section className="active-projects"><header><h2><FlaskConical size={18} className="heading-icon" />進行中の仮説</h2><p>未確認の項目と、次に進める検証です。</p></header>
         {activeProjects.length ? <div>{activeProjects.map((project) => {
           const contextDirty = Boolean(project.pendingContext)
           const observed = projectContext(project).observed
           const unknownCount = project.proposal.analysis.criticalUnknowns.length
           const next = contextDirty ? '追加した情報を仮説へ反映' : project.proposal.analysis.criticalUnknowns[0]?.question ?? project.proposal.validationPlan.items[0]?.title
-          return <button key={project.id} type="button" className="project-card" onClick={() => onOpenProject(project)}><header><strong>{projectName(project)}</strong><span className={`project-status status-${project.status.toLowerCase()}`}>{contextDirty ? '更新待ち' : projectStatusLabels[project.status]}</span></header><p className="project-hypothesis">{project.proposal.redesign.headline}</p><dl><div><dt>保存時点</dt><dd>{observed.occurrences}回・{formatMinutes(observed.totalMinutes)}</dd></div><div><dt>{contextDirty ? '反映待ち' : '未確認'}</dt><dd>{contextDirty ? '業務情報を更新済み' : `${unknownCount}件`}</dd></div></dl>{next && <small>次にやること：{next}</small>}<span className="project-continue">続ける<ArrowRight size={18} /></span></button>
+          return <button key={project.id} type="button" className="project-card" onClick={() => onOpenProject(project)}><header><strong>{projectName(project)}</strong>{contextDirty ? <span className="project-status status-dirty"><RefreshCw size={14} />更新待ち</span> : <StatusBadge status={project.status} />}</header><p className="project-hypothesis">{project.proposal.redesign.headline}</p><dl><div><dt>保存時点</dt><dd>{observed.occurrences}回・{formatMinutes(observed.totalMinutes)}</dd></div><div><dt>{contextDirty ? '反映待ち' : '未確認'}</dt><dd>{contextDirty ? '業務情報を更新済み' : `${unknownCount}件`}</dd></div></dl>{next && <small>次にやること：{next}</small>}<span className="project-continue">続ける<ArrowRight size={18} /></span></button>
         })}</div> : <div className="empty-dashboard-projects"><p>進行中の仮説はまだありません。</p><span>業務について答えて仮説を保存すると、ここから検証を続けられます。採用すると削減時間もここで追えます。</span></div>}
         {adoptedReductions.length > 0 && <div className="reduction-summary"><h3><TrendingDown size={18} />採用した仮説の効果{totalSavedMinutes !== 0 && <b className={totalSavedMinutes > 0 ? 'is-down' : ''}>合計 {totalSavedMinutes > 0 ? `−${formatMinutes(totalSavedMinutes)}` : `+${formatMinutes(-totalSavedMinutes)}`} / 4週間</b>}</h3>
           {adoptedReductions.map(({ project, reduction }) => <button key={project.id} type="button" className="reduction-row" onClick={() => onOpenProject(project)}>
@@ -139,14 +145,14 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
       </section>
     </div>
     {projects.length > 0 && <details className="saved-projects-list"><summary>保存した仮説をすべて見る（{projects.length}件）</summary>
-      <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpenProject(project)}><span><strong>{projectName(project)}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><span className={`project-status status-${project.status.toLowerCase()}`}>{projectStatusLabels[project.status]}</span><ArrowRight size={20} /></button>)}</div>
+      <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpenProject(project)}><span><strong>{projectName(project)}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><StatusBadge status={project.status} /><ArrowRight size={20} /></button>)}</div>
     </details>}
     <div className="dashboard-actions"><span className="workspace-account">{email ? `${email} で利用中` : ''}</span><button type="button" className="text-button" onClick={() => void onDisconnect()}>接続を解除</button></div>
     {detailGroup && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog group-detail" role="dialog" aria-modal="true" aria-labelledby="group-detail-heading">
       <p className="eyebrow">カレンダーで分かったこと</p>
       <h2 id="group-detail-heading">{detailGroup.title}</h2>
       <dl className="group-detail-facts">
-        <div><dt>分類</dt><dd>{detailGroup.category}</dd></div>
+        <div><dt>分類</dt><dd>{(() => { const Icon = categoryIcons[detailGroup.category]; return Icon ? <Icon size={16} /> : null })()}{detailGroup.category}</dd></div>
         <div><dt>期間</dt><dd>{formatPeriod(detailGroup)}</dd></div>
         <div><dt>回数</dt><dd>{detailGroup.occurrences}回 / 4週間</dd></div>
         <div><dt>合計時間</dt><dd>{formatMinutes(detailGroup.totalMinutes)}</dd></div>
@@ -156,8 +162,8 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, muted
         {detailProject && <div><dt>仮説</dt><dd>{projectStatusLabels[detailProject.status]}</dd></div>}
       </dl>
       {mutedWork.has(normalizeWorkTitle(detailGroup.title))
-        ? <button type="button" className="text-button mute-toggle" onClick={() => onUnmuteWork(detailGroup.title)}>声かけの対象に戻す</button>
-        : <button type="button" className="text-button mute-toggle" onClick={() => onMuteWork(detailGroup.title)}>この業務は声かけの対象外にする（休憩・私用など）</button>}
+        ? <button type="button" className="text-button mute-toggle" onClick={() => onUnmuteWork(detailGroup.title)}><Bell size={15} />声かけの対象に戻す</button>
+        : <button type="button" className="text-button mute-toggle" onClick={() => onMuteWork(detailGroup.title)}><BellOff size={15} />この業務は声かけの対象外にする（休憩・私用など）</button>}
       <div className="group-detail-actions">
         <button type="button" className="secondary-button" onClick={() => setDetailGroup(null)}>閉じる</button>
         {detailProject && <button type="button" className="secondary-button" onClick={() => { setDetailGroup(null); onOpenProject(detailProject) }}>仮説を開く</button>}
