@@ -33,15 +33,14 @@ import type {
   ProjectStatus,
   Screen,
   WorkGroup,
-  WorkflowStep,
 } from './types'
 import WorkflowDiagram from './WorkflowDiagram'
 
 const toolSteps: { screens: Screen[]; label: string }[] = [
-  { screens: ['discovery'], label: '業務を発見' },
-  { screens: ['interview'], label: 'コンテクスト収集' },
-  { screens: ['review'], label: '業務を構造化' },
-  { screens: ['redesign', 'analysis'], label: '仮説を検証' },
+  { screens: ['discovery'], label: '業務を選ぶ' },
+  { screens: ['interview'], label: '質問に答える' },
+  { screens: ['review'], label: '内容を確認' },
+  { screens: ['redesign'], label: '仮説' },
 ]
 
 type RequestStatus = 'idle' | 'loading' | 'error'
@@ -121,7 +120,6 @@ function HomeScreen({ calendar, busy, error, onConnect, onCalendarStart, onDisco
   return (
     <main className="home-grid">
       <section className="home-intro"><div>
-        <p className="hero-kicker">WORK DESIGN WORKSPACE</p>
         <h1 className="hero-title">業務を見つけ、<br /><span>理解してから作り直す。</span></h1>
         <p className="hero-description">カレンダーから繰り返し業務の存在を見つけます。その予定だけで結論を出さず、あなたへの質問から目的・判断・制約を整理し、検証できる再設計仮説を作ります。</p>
         <div className="home-actions">
@@ -151,7 +149,7 @@ function HomeScreen({ calendar, busy, error, onConnect, onCalendarStart, onDisco
             <li><span><strong>新人教育</strong><small>必要な回と対象を確認する</small></span><b className="treatment-unknown">? 未確認</b></li>
           </ul>
         </div>
-        <p className="example-note">AIは裏側で整理します。画面で扱うのは、事実・仮定・未確認を分けた業務モデルです。</p>
+        <p className="example-note">表示は例です。実際は、あなたのカレンダーから見つけた業務をこの形に整理します。</p>
       </section>
     </main>
   )
@@ -230,7 +228,7 @@ function DiscoveryScreen({ groups, selectedGroup, onSelectGroup, onSelect }: {
 
   return (
     <main className="tool-main">
-      <ToolTitle title="過去4週間の業務傾向" summary="Calendarから観測できた事実です。業務内容や改善方法はまだ判断していません。" />
+      <ToolTitle title="過去4週間の業務傾向" summary="カレンダーで分かったことです。" />
       <section className="discovery-summary" aria-label="過去4週間の集計">
         <div><span>カレンダー上の業務</span><strong>{formatMinutes(summary.calendarMinutes)}</strong></div>
         <div><span>繰り返し予定</span><strong>{formatMinutes(summary.recurringMinutes)}</strong></div>
@@ -250,7 +248,7 @@ function DiscoveryScreen({ groups, selectedGroup, onSelectGroup, onSelect }: {
         </section>
         <aside className="selection-pane" aria-labelledby="selected-work-heading">
           <button type="button" className="mobile-list-back" onClick={() => setShowMobileDetail(false)}><ArrowLeft size={18} />一覧へ戻る</button>
-          <p className="eyebrow">観測できたこと</p><h2 id="selected-work-heading">{selectedGroup.title}</h2><p className="work-meta">{selectedGroup.category}・{formatPeriod(selectedGroup)}</p>
+          <p className="eyebrow">カレンダーで分かったこと</p><h2 id="selected-work-heading">{selectedGroup.title}</h2><p className="work-meta">{selectedGroup.category}・{formatPeriod(selectedGroup)}</p>
           <dl className="evidence-list"><div><dt>回数</dt><dd>{selectedGroup.occurrences}回</dd></div><div><dt>合計時間</dt><dd>{formatMinutes(selectedGroup.totalMinutes)}</dd></div><div><dt>1回あたり</dt><dd>平均{formatMinutes(selectedGroup.averageMinutes)}</dd></div><div><dt>登録</dt><dd>{selectedGroup.evidence.recurring ? '同一の定例予定' : '同じタイトルの予定'}</dd></div></dl>
           <div className="observation-note"><CircleHelp size={20} /><p>この情報だけでは、目的や必要性は分かりません。次に、あなたが知っている業務の背景を確認します。</p></div>
           <button type="button" className="primary-button full-width" onClick={() => void selectWork()} disabled={preparing}>{preparing ? <><LoaderCircle className="animate-spin" />質問を準備中</> : <>この業務について答える<ArrowRight size={20} /></>}</button>
@@ -347,10 +345,10 @@ function InterviewScreen({ group, plan, answers, setAnswers, onComplete }: {
 
   return (
     <main className="tool-main narrow-tool">
-      <ToolTitle title={group.title} summary={plan.phase === 'CORE' ? `Core Interview ${Math.min(answeredInPlan + 1, plan.questions.length)} / ${plan.questions.length}` : `追加確認 ${Math.min(answeredInPlan + 1, plan.questions.length)} / ${plan.questions.length}`} />
+      <ToolTitle title={group.title} summary={plan.phase === 'CORE' ? `質問 ${Math.min(answeredInPlan + 1, plan.questions.length)} / ${plan.questions.length}` : `追加の質問 ${Math.min(answeredInPlan + 1, plan.questions.length)} / ${plan.questions.length}`} />
       <div className="observation-strip"><span>Calendarで確認</span><strong>{group.occurrences}回</strong><strong>合計{formatMinutes(group.totalMinutes)}</strong><strong>平均{formatMinutes(group.averageMinutes)}</strong></div>
       {answers.length > 0 && <details className="previous-answers"><summary>回答済みの内容（{answers.length}件）</summary><ol>{answers.map((answer) => <li key={`${answer.questionId}-${answer.answer}`}><strong>{answer.question}</strong><p>{answer.answer}</p></li>)}</ol></details>}
-      {status === 'loading' ? <div className="request-state" aria-live="polite"><LoaderCircle className="animate-spin" /><div><strong>{plan.phase === 'CORE' ? '暫定業務モデルを整理しています' : '追加情報を反映しています'}</strong><p>選んだ回答の意味を変えずに、確認済み・一部確認・未確認へ分けます。</p></div></div>
+      {status === 'loading' ? <div className="request-state" aria-live="polite"><LoaderCircle className="animate-spin" /><div><strong>{plan.phase === 'CORE' ? '回答を整理しています' : '追加した内容を反映しています'}</strong><p>回答の意味は変えずに、確認済み・一部確認・未確認に分けます。</p></div></div>
         : status === 'error' ? <div className="request-error" role="alert"><strong>回答内容を整理できませんでした</strong><p>{errorMessage}</p><button type="button" className="primary-button" onClick={() => void retry()}>再試行</button></div>
           : question ? <form className="interview-form" onSubmit={(event) => void submitAnswer(event)}>
             <div className="question-block"><h2 id="question-heading">{question.prompt}</h2><p id="question-hint">{question.hint}</p></div>
@@ -358,7 +356,7 @@ function InterviewScreen({ group, plan, answers, setAnswers, onComplete }: {
             <fieldset className="answer-options" aria-labelledby="question-heading" aria-describedby="question-hint"><legend className="sr-only">回答候補</legend>{question.options.map((option) => { const selected = selectedOptionIds.includes(option.id) && !customMode; return <label key={option.id} className={selected ? 'is-selected' : ''}><input type={(question.selection ?? 'SINGLE') === 'MULTIPLE' ? 'checkbox' : 'radio'} name={question.id} checked={selected} onChange={() => toggleOption(option)} /><span>{option.label}</span>{selected && <Check size={18} aria-hidden="true" />}</label> })}</fieldset>
             <button type="button" className="text-button custom-answer-toggle" onClick={() => { setCustomMode(true); setSelectedOptionIds([]) }}>選択肢にない内容を入力</button>
             {customMode && <textarea className="answer-input" value={draft} onChange={(event) => setDraft(event.target.value)} rows={4} maxLength={2000} autoFocus placeholder="分かる範囲で入力してください" />}
-            <button type="submit" className="primary-button full-width" disabled={customMode ? !draft.trim() : !selectedOptionIds.length}>{answeredInPlan + 1 === plan.questions.length ? '暫定モデルを確認' : '次へ'}<ArrowRight size={20} /></button>
+            <button type="submit" className="primary-button full-width" disabled={customMode ? !draft.trim() : !selectedOptionIds.length}>{answeredInPlan + 1 === plan.questions.length ? '整理を確認' : '次へ'}<ArrowRight size={20} /></button>
           </form> : null}
     </main>
   )
@@ -453,8 +451,8 @@ function ReviewScreen({ task, setTask, followUpCount, onFollowUp, onAddContext, 
   }
 
   return <main className="tool-main">
-    <ToolTitle title="暫定業務モデル" summary="まず回答の要点だけを確認します。未確認事項が結論に影響する場合だけ、追加で質問します。" />
-    <section className="observed-facts"><h2>Calendarで観測した事実</h2><div><span>{task.observed.occurrences}回 / 4週間</span><span>合計{formatMinutes(task.observed.totalMinutes)}</span><span>1回平均{formatMinutes(task.observed.averageMinutes)}</span></div></section>
+    <ToolTitle title="いまの整理" summary="回答の要点を確認します。判断に影響する項目だけ、追加で質問します。" />
+    <section className="observed-facts"><h2>カレンダーで分かったこと</h2><div><span>{task.observed.occurrences}回 / 4週間</span><span>合計{formatMinutes(task.observed.totalMinutes)}</span><span>1回平均{formatMinutes(task.observed.averageMinutes)}</span></div></section>
     <WorkDecomposition task={task} onEdit={openEditing} />
     <div className="review-layout">
       <div>
@@ -496,10 +494,6 @@ function EvidenceColumn({ title, items, tone, empty }: { title: string; items: s
   return <section className={`evidence-column ${tone}`}><h3>{title}</h3>{items.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{empty}</p>}</section>
 }
 
-function workflowSteps(design: BusinessDesign): WorkflowStep[] {
-  return design.redesign.workflow.map((step, index) => ({ id: `${index}-${step.label}`, ...step }))
-}
-
 function RedesignScreen({ design, connected, savedProject, onSave, onOpenSaved }: {
   design: BusinessDesign
   connected: boolean
@@ -535,7 +529,7 @@ function RedesignScreen({ design, connected, savedProject, onSave, onOpenSaved }
   }
 
   return <main className="tool-main">
-    <ToolTitle title="再設計仮説" summary="答えではなく、前提を確認しながら人が育てる仮説です。" />
+    <ToolTitle title="再設計仮説" summary="これは決定ではありません。前提を確かめながら、あなたが直していく仮説です。" />
     <section className="result-overview">
       <div className={`judgement ${needsContext ? 'needs-context' : ''}`}><strong>{needsContext ? '判断保留' : '検証候補'}</strong><p>{design.analysis.conclusion}</p></div>
       <div className="result-headline"><h2>{design.redesign.headline}</h2><p>{design.redesign.hypothesis}</p></div>
@@ -544,7 +538,7 @@ function RedesignScreen({ design, connected, savedProject, onSave, onOpenSaved }
         <section><h3>仮説</h3><strong>{metrics.routineHumanWorkAfter}</strong><p>{metrics.scheduledOutputAfter}</p><p>{metrics.detectionAfter}</p></section>
       </div>
       <div className="result-conditions">
-        <section><h3>成立条件</h3>{design.analysis.assumptions.length ? <ul>{design.analysis.assumptions.map((item) => <li key={item}>{item}</li>)}</ul> : <p>追加の仮定はありません。</p>}</section>
+        <section><h3>成り立つ前提</h3>{design.analysis.assumptions.length ? <ul>{design.analysis.assumptions.map((item) => <li key={item}>{item}</li>)}</ul> : <p>追加の前提はありません。</p>}</section>
         <section><h3>未確認</h3>{design.analysis.unknowns.length ? <ul>{design.analysis.unknowns.map((item) => <li key={item}>{item}</li>)}</ul> : <p>重大な未確認事項はありません。</p>}</section>
       </div>
       <div className="result-actions"><button type="button" className="secondary-button" onClick={toggleValidation}>{showValidation ? '検証方法を閉じる' : 'この仮説を検証する'}<ArrowRight size={20} /></button>{!connected ? <span>保存するにはGoogle Calendarへ接続してください。</span> : savedProject ? <button type="button" className="primary-button" onClick={onOpenSaved}>保存した業務を開く<ArrowRight size={20} /></button> : <button type="button" className="primary-button" disabled={status === 'loading'} onClick={() => void run(onSave)}>{status === 'loading' ? <><LoaderCircle className="animate-spin" />保存中</> : '仮説を保存してワークスペースへ'}</button>}</div>
@@ -554,15 +548,15 @@ function RedesignScreen({ design, connected, savedProject, onSave, onOpenSaved }
     <WorkDecomposition task={design.businessTask} design={design} />
 
     <details className="report-section"><summary>現在と仮説の比較</summary><section className="comparison-section"><div className="comparison-table"><div className="comparison-head"><span></span><strong>現在</strong><strong>仮説</strong></div>{comparisons.map(([label, before, after]) => <div key={label}><span>{label}</span><p>{before}</p><p>{after}</p></div>)}</div><p className="comparison-assumption">前提：{design.redesign.impact.assumption}</p></section></details>
-    <details className="report-section"><summary>工程と役割</summary><section className="workflow-section"><h2>現在の工程</h2>{design.businessTask.steps.length ? <ol className="plain-workflow">{design.businessTask.steps.map((step) => <li key={step}>{step}</li>)}</ol> : <p>現在の工程は未確認です。</p>}<h2>仮説上の工程</h2><WorkflowDiagram steps={workflowSteps(design)} ariaLabel="再設計仮説の工程" /></section><section className="role-section"><h2>担当する役割</h2><div className="role-grid"><div><h3>システム</h3><ul>{design.redesign.roles.system.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>AI</h3><ul>{design.redesign.roles.ai.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>人</h3><ul>{design.redesign.roles.human.map((item) => <li key={item}>{item}</li>)}</ul></div></div></section></details>
-    <details className="report-section"><summary>根拠と不確実性</summary><div className="evidence-grid"><EvidenceColumn title="確認できていること" items={design.analysis.facts} tone="facts" empty="確認済み情報はありません" /><EvidenceColumn title="成立のための仮定" items={design.analysis.assumptions} tone="assumptions" empty="仮定はありません" /><EvidenceColumn title="まだ分からないこと" items={design.analysis.unknowns} tone="unknowns" empty="重大な未確認事項はありません" /></div></details>
+    <details className="report-section"><summary>工程と役割</summary><section className="workflow-section"><h2>現在の工程</h2>{design.businessTask.steps.length ? <ol className="plain-workflow">{design.businessTask.steps.map((step) => <li key={step}>{step}</li>)}</ol> : <p>現在の工程は未確認です。</p>}<h2>仮説上の工程</h2><WorkflowDiagram steps={design.redesign.workflow} ariaLabel="再設計仮説の工程" /></section><section className="role-section"><h2>担当する役割</h2><div className="role-grid"><div><h3>システム</h3><ul>{design.redesign.roles.system.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>AI</h3><ul>{design.redesign.roles.ai.map((item) => <li key={item}>{item}</li>)}</ul></div><div><h3>人</h3><ul>{design.redesign.roles.human.map((item) => <li key={item}>{item}</li>)}</ul></div></div></section></details>
+    <details className="report-section"><summary>根拠と不確実性</summary><div className="evidence-grid"><EvidenceColumn title="確認できていること" items={design.analysis.facts} tone="facts" empty="確認済みの情報はありません" /><EvidenceColumn title="成り立つ前提" items={design.analysis.assumptions} tone="assumptions" empty="前提はありません" /><EvidenceColumn title="まだ分からないこと" items={design.analysis.unknowns} tone="unknowns" empty="重大な未確認の項目はありません" /></div></details>
 
     {showValidation && <section ref={validationRef} className="validation-section"><header><h2>検証方法</h2><p>{design.validationPlan.summary}</p></header>{design.validationPlan.items.map((item) => <article key={`${item.type}-${item.title}`}><span>{validationLabels[item.type]}</span><h3>{item.title}</h3><p>{item.description}</p><ul>{item.checks.map((check) => <li key={check}>{check}</li>)}</ul></article>)}</section>}
   </main>
 }
 
 function ProjectsScreen({ projects, onOpen }: { projects: ImprovementProject[]; onOpen: (project: ImprovementProject) => void }) {
-  return <main className="tool-main"><ToolTitle title="保存した仮説" summary="確認・承認した業務モデルと検証計画だけを保存しています。" />{projects.length ? <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpen(project)}><span><strong>{project.taskName}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><span className={`project-status status-${project.status.toLowerCase()}`}>{projectStatusLabels[project.status]}</span><ArrowRight size={20} /></button>)}</div> : <div className="empty-projects"><h2>保存した仮説はありません</h2><p>再設計案を正解としてではなく、検証する仮説として保存できます。</p></div>}</main>
+  return <main className="tool-main"><ToolTitle title="保存した仮説" summary="確認・承認した業務モデルと検証計画だけを保存しています。" />{projects.length ? <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpen(project)}><span><strong>{project.taskName}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><span className={`project-status status-${project.status.toLowerCase()}`}>{projectStatusLabels[project.status]}</span><ArrowRight size={20} /></button>)}</div> : <div className="empty-projects"><h2>保存した仮説はありません</h2><p>業務の仮説を保存すると、ここから検証を続けられます。</p></div>}</main>
 }
 
 function ProjectDetailScreen({ project, onAddContext, onUpdateHypothesis, onStatus }: {
@@ -597,9 +591,9 @@ function ProjectDetailScreen({ project, onAddContext, onUpdateHypothesis, onStat
         <SummaryItem title="関係者">{project.businessContext.stakeholders.length ? project.businessContext.stakeholders.join('、') : '未確認'}</SummaryItem>
         <SummaryItem title="確認済みの役割">{roleDetails.length ? <ul>{roleDetails.map((role) => <li key={role.name}>{role.name}{role.scope !== 'ALL' ? ` — ${role.scopeDetail ?? '条件付き'}` : ''}</li>)}</ul> : '未確認'}</SummaryItem>
       </dl></section>
-      <section className="project-hypothesis-panel"><h2>再設計仮説</h2><h3>{project.proposal.redesign.headline}</h3><p>{project.hypothesis}</p><small>AIの提案ではなく、確認と検証を続けるための仮説です。</small></section>
+      <section className="project-hypothesis-panel"><h2>再設計仮説</h2><h3>{project.proposal.redesign.headline}</h3><p>{project.hypothesis}</p></section>
     </div>
-    <section className="project-unknowns"><header><h2>未確認事項</h2><p>現実の業務で分かったことを追加します。保存後、仮説の更新は別操作で行います。</p></header>
+    <section className="project-unknowns"><header><h2>先に確認したいこと</h2><p>現場で分かったことを追加します。追加した内容は「仮説を更新する」で反映されます。</p></header>
       {unknowns.length ? unknowns.map((unknown) => <article key={unknown.id}><div><strong>{unknown.question}</strong><p>{unknown.reason}</p></div><form onSubmit={(event) => { event.preventDefault(); const detail = drafts[unknown.id]?.trim(); if (detail) void run(() => onAddContext(unknown.id, unknown.dimension, unknown.question, detail)) }}><input value={drafts[unknown.id] ?? ''} onChange={(event) => setDrafts((current) => ({ ...current, [unknown.id]: event.target.value }))} placeholder="確認した具体的な内容" /><button type="submit" disabled={status === 'loading' || !drafts[unknown.id]?.trim()}>業務情報へ反映</button></form></article>) : <p className="all-resolved"><Check size={18} />表示中の未確認事項はすべて更新済みです。</p>}
     </section>
     <section className="project-validations"><header><h2>検証</h2><p>{project.proposal.validationPlan.summary}</p></header>{project.validations.map((item) => <article key={`${item.type}-${item.title}`}><span>{validationLabels[item.type]}</span><div><strong>{item.title}</strong><p>{item.description}</p><ul>{item.checks.map((check) => <li key={check}>{check}</li>)}</ul></div></article>)}</section>

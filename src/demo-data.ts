@@ -203,31 +203,16 @@ export function createDemoDesign(task: BusinessTask): BusinessDesign {
     businessTask: task,
     analysis: {
       readiness: criticalUnknowns.length ? 'NEEDS_CONTEXT' : 'HYPOTHESIS_READY',
-      conclusion: criticalUnknowns.length ? '未確認事項が残っているため、現時点では判断を保留します。' : '確認済みの内容を前提に、検証する仮説を作れます。',
-      purposeCheck: {
-        outcome: task.purpose,
-        currentMeans: `${task.name}を1回平均${task.observed.averageMinutes}分行う`,
-        outputDecision: task.outputRequirementReason,
-      },
-      problems: [
-        { value: `${task.observed.occurrences}回`, label: '4週間の回数', detail: 'Calendarから観測した事実' },
-        { value: `${task.observed.totalMinutes}分`, label: '合計時間', detail: '参加人数を含まない予定枠の合計' },
-        { value: `${criticalUnknowns.length}件`, label: '重要な未確認事項', detail: '仮説の判断に影響する項目' },
-      ],
-      ratings: { opportunity: 'MEDIUM', implementation: 'MEDIUM', aiFit: 'MEDIUM' },
-      ratingReasons: ['頻度は高い一方、役割と制約を確認してから設計を変える必要があります。'],
+      conclusion: criticalUnknowns.length ? '未確認の項目が残っているため、現時点では判断を保留します。' : '確認済みの内容を前提に、検証する仮説を作れます。',
       facts,
       assumptions,
       unknowns,
       criticalUnknowns,
-      nextQuestions: criticalUnknowns.map((item) => item.question),
-      conventional: { summary: '会議時間を短くし、共有項目を固定する。', steps: ['共有内容を事前記入', '差分だけを発言', '責任者が調整事項を確認'] },
     },
     redesign: {
       strategy: task.outputRequirement === 'ON_DEMAND' ? 'ON_DEMAND' : 'KEEP',
       hypothesis,
       headline,
-      insight: hasConsultation ? '共有と相談を同じ会議に束ねず、それぞれに合う方法へ分ける仮説です。' : '毎朝全員で探していた変化を、差分があるときだけ人が確認する仮説です。',
       workflow: hasConsultation ? [
         { label: '予定差分を取得', detail: '許可された予定から追加・削除・時刻変更を抽出する', kind: 'system' },
         { label: '必要時だけ共有', detail: '重要な変更候補を関係者へ知らせる', kind: 'ai' },
@@ -253,7 +238,7 @@ export function createDemoDesign(task: BusinessTask): BusinessDesign {
         outputBefore: task.output,
         outputAfter: hasConsultation ? '変更通知と、別途確保する相談' : '重要な変化の通知',
       },
-      impact: { routineMinutesPerCycle: 0, exceptionMinutesMin: 5, exceptionMinutesMax: 10, confidence: 'LOW', assumption: assumptions.join('。') },
+      impact: { assumption: assumptions.join('。') },
     },
     validationPlan: {
       summary: '仮説を採用する前に、未確認事項と技術条件を順に確認します。期間は検証内容に応じて決めます。',

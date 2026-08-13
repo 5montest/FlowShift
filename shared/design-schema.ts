@@ -195,7 +195,6 @@ export const businessTaskSchema = businessTaskDraftSchema.extend({
   }
 })
 
-export const ratingSchema = z.enum(['HIGH', 'MEDIUM', 'LOW'])
 export const workflowKindSchema = z.enum(['human', 'system', 'ai', 'decision', 'output'])
 export const workflowStepSchema = z.object({ label: shortText, detail: shortText, kind: workflowKindSchema }).strict()
 export const redesignStrategySchema = z.enum(['ELIMINATE', 'ON_DEMAND', 'AUTOMATE', 'KEEP'])
@@ -220,22 +219,15 @@ export const designOutputSchema = z.object({
   analysis: z.object({
     readiness: designReadinessSchema,
     conclusion: sentence,
-    purposeCheck: z.object({ outcome: sentence, currentMeans: sentence, outputDecision: sentence }).strict(),
-    problems: z.array(z.object({ value: shortText, label: shortText, detail: shortText }).strict()).min(1).max(5),
-    ratings: z.object({ opportunity: ratingSchema, implementation: ratingSchema, aiFit: ratingSchema }).strict(),
-    ratingReasons: z.array(sentence).min(1).max(5),
     facts: z.array(sentence).min(2).max(12),
     assumptions: z.array(sentence).max(10),
     unknowns: z.array(sentence).max(10),
     criticalUnknowns: z.array(criticalUnknownSchema).max(6).default([]),
-    nextQuestions: z.array(sentence).max(8),
-    conventional: z.object({ summary: sentence, steps: z.array(shortText).min(1).max(12) }).strict(),
   }).strict(),
   redesign: z.object({
     strategy: redesignStrategySchema,
-    hypothesis: sentence,
+    hypothesis: z.string().trim().min(1).max(200),
     headline: sentence,
-    insight: sentence,
     workflow: z.array(workflowStepSchema).min(3).max(7),
     roles: z.object({ system: textList, ai: textList, human: z.array(shortText).min(1).max(12) }).strict(),
     metrics: z.object({
@@ -248,22 +240,13 @@ export const designOutputSchema = z.object({
       outputBefore: shortText,
       outputAfter: shortText,
     }).strict(),
-    impact: z.object({
-      routineMinutesPerCycle: z.number().int().min(0).max(10000),
-      exceptionMinutesMin: z.number().int().min(0).max(10000),
-      exceptionMinutesMax: z.number().int().min(0).max(10000),
-      confidence: ratingSchema,
-      assumption: sentence,
-    }).strict(),
+    impact: z.object({ assumption: sentence }).strict(),
   }).strict(),
   validationPlan: z.object({ summary: sentence, items: z.array(validationItemSchema).min(1).max(5) }).strict(),
 }).strict()
 
 export function designOutputSchemaFor(task: BusinessTask) {
   return designOutputSchema.superRefine((design, context) => {
-    if (design.redesign.impact.exceptionMinutesMin > design.redesign.impact.exceptionMinutesMax) {
-      context.addIssue({ code: 'custom', path: ['redesign', 'impact', 'exceptionMinutesMin'], message: '例外時の最小時間は最大時間以下にしてください。' })
-    }
     const criticalContext = [task.contextStatus.constraints, task.contextStatus.dependencies, task.contextStatus.risks]
     if (criticalContext.includes('UNKNOWN') && design.analysis.readiness !== 'NEEDS_CONTEXT') {
       context.addIssue({ code: 'custom', path: ['analysis', 'readiness'], message: '重大な制約・依存関係・リスクが未確認の場合は、追加確認が必要です。' })
@@ -301,10 +284,6 @@ export type RoleScope = z.infer<typeof roleScopeSchema>
 export type WorkObservation = z.infer<typeof workObservationSchema>
 export type ContextState = z.infer<typeof contextStateSchema>
 export type ContextDimension = z.infer<typeof contextDimensionSchema>
-export type Rating = z.infer<typeof ratingSchema>
 export type WorkflowKind = z.infer<typeof workflowKindSchema>
 export type WorkflowStepInput = z.infer<typeof workflowStepSchema>
 export type ValidationItem = z.infer<typeof validationItemSchema>
-export type ValidationType = z.infer<typeof validationTypeSchema>
-export type OutputRequirement = z.infer<typeof businessTaskSchema.shape.outputRequirement>
-export type RedesignStrategy = z.infer<typeof redesignStrategySchema>

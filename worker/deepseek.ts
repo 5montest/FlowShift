@@ -163,8 +163,8 @@ const designPrompt = `あなたはFlowShiftの業務再設計パートナーで�
 - AIは最終判断者ではない。Calendar情報だけで廃止・自動化を断定しない。
 - businessTask.answerEvidenceの原文とmeaningはユーザー回答の正本であり、別の意味へ解釈し直さない。businessRolesにある役割を「未確認」と書かない。
 - factsは観測事実と回答済み事項だけ。成立条件はassumptions、判断前の不足情報はunknownsへ分ける。
-- constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXT、strategyはKEEPとし、廃止可否を判断できない旨とnextQuestionsを示す。
-- HYPOTHESIS_READYでもhypothesisは「〜であり、〜が存在しない場合、〜へ変更できる可能性がある」という条件付き表現にする。
+- constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXT、strategyはKEEPとし、conclusionで廃止可否を判断できない旨を示す。
+- HYPOTHESIS_READYでもhypothesisは「〜であり、〜が存在しない場合、〜へ変更できる可能性がある」という条件付き表現にする。hypothesisは全角200字以内に収める。
 - 「この作業をAIで速くする」より「そもそもこの作業・成果物は必要か」を先に検討する。ただし不要と確認されていないものを消さない。
 - systemは決定論的な取得・通知、aiは意味整理・候補提示、人は確認・判断を担当する。
 - 時間は入力頻度を変換せず、根拠のない年間換算や精密値を作らない。
@@ -172,8 +172,8 @@ const designPrompt = `あなたはFlowShiftの業務再設計パートナーで�
 
 必ず次のキーだけを持つ日本語のjsonを返してください。
 {
-  "analysis":{"readiness":"HYPOTHESIS_READY | NEEDS_CONTEXT","conclusion":"string","purposeCheck":{"outcome":"string","currentMeans":"string","outputDecision":"string"},"problems":[{"value":"string","label":"string","detail":"string"}],"ratings":{"opportunity":"HIGH | MEDIUM | LOW","implementation":"HIGH | MEDIUM | LOW","aiFit":"HIGH | MEDIUM | LOW"},"ratingReasons":["string"],"facts":["string"],"assumptions":["string"],"unknowns":["string"],"criticalUnknowns":[{"id":"英数字ID","dimension":"roles | constraints | dependencies | risksなど","question":"確認する質問","reason":"仮説へ与える影響"}],"nextQuestions":["string"],"conventional":{"summary":"string","steps":["string"]}},
-  "redesign":{"strategy":"ELIMINATE | ON_DEMAND | AUTOMATE | KEEP","hypothesis":"条件付きの再設計仮説","headline":"短い仮説名","insight":"現在の仕事から何を判断する仕事へ変える可能性か","workflow":[{"label":"string","detail":"string","kind":"human | system | ai | decision | output"}],"roles":{"system":["string"],"ai":["string"],"human":["string"]},"metrics":{"scheduledOutputBefore":"string","scheduledOutputAfter":"string","routineHumanWorkBefore":"string","routineHumanWorkAfter":"string","detectionBefore":"string","detectionAfter":"string","outputBefore":"string","outputAfter":"string"},"impact":{"routineMinutesPerCycle":0,"exceptionMinutesMin":0,"exceptionMinutesMax":0,"confidence":"HIGH | MEDIUM | LOW","assumption":"string"}},
+  "analysis":{"readiness":"HYPOTHESIS_READY | NEEDS_CONTEXT","conclusion":"string","facts":["string"],"assumptions":["string"],"unknowns":["string"],"criticalUnknowns":[{"id":"英数字ID","dimension":"roles | constraints | dependencies | risksなど","question":"確認する質問","reason":"仮説へ与える影響"}]},
+  "redesign":{"strategy":"ELIMINATE | ON_DEMAND | AUTOMATE | KEEP","hypothesis":"条件付きの再設計仮説（200字以内）","headline":"短い仮説名","workflow":[{"label":"string","detail":"string","kind":"human | system | ai | decision | output"}],"roles":{"system":["string"],"ai":["string"],"human":["string"]},"metrics":{"scheduledOutputBefore":"string","scheduledOutputAfter":"string","routineHumanWorkBefore":"string","routineHumanWorkAfter":"string","detectionBefore":"string","detectionAfter":"string","outputBefore":"string","outputAfter":"string"},"impact":{"assumption":"string"}},
   "validationPlan":{"summary":"string","items":[{"type":"PILOT | TECHNICAL_FEASIBILITY | OFFLINE_EVALUATION | REQUIREMENT_VALIDATION | STAKEHOLDER_REVIEW","title":"string","description":"string","checks":["string"]}]}
 }`
 
@@ -206,9 +206,9 @@ function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput
   const combinedHypothesis = roleNote && !roleIsMentioned(design.redesign.hypothesis)
     ? `${design.redesign.hypothesis} ${roleNote}`
     : design.redesign.hypothesis
-  const hypothesis = combinedHypothesis.length <= 800
+  const hypothesis = combinedHypothesis.length <= 200
     ? combinedHypothesis
-    : `${design.redesign.hypothesis.slice(0, Math.max(1, 799 - roleNote.length))} ${roleNote}`
+    : `${design.redesign.hypothesis.slice(0, Math.max(1, 199 - roleNote.length))} ${roleNote}`
   const requiresSynchronousRole = businessTask.deliveryModel.synchronousRole === 'SEPARATE_REQUIRED'
   const requiresCurrentFormat = businessTask.deliveryModel.currentFormat === 'REQUIRED'
 

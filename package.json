@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "smoke": "node scripts/smoke-local.mjs",
     "smoke:http": "node scripts/smoke-local.mjs --skip-ai",
+    "check": "npm run workgroups:check && npm run interview:check && npm run projects:check && npm run decomposition:check",
     "secret:check": "node scripts/check-repository-secrets.mjs",
     "workgroups:check": "node --experimental-strip-types scripts/check-work-groups.mjs",
     "interview:check": "node --experimental-strip-types scripts/check-interview-meaning.mjs",

@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run secret:check
+      - run: npm run check
       - run: npm run types
       - name: Verify generated Worker types
         run: git diff --exit-code -- worker-configuration.d.ts

@@ -69,7 +69,7 @@ async function requestJson<T>(path: string, schema: z.ZodType<T>, init?: Request
   }
 
   const parsed = schema.safeParse(payload)
-  if (!parsed.success) throw new ApiError('invalid_response', 'APIの応答形式を確認できませんでした。')
+  if (!parsed.success) throw new ApiError('invalid_response', 'サーバーの応答を読み取れませんでした。もう一度お試しください。')
   return parsed.data
 }
 
@@ -154,8 +154,8 @@ export async function createImprovementProject(design: BusinessDesign): Promise<
   return result.project
 }
 
-export async function updateImprovementProjectStatus(id: string, status: ProjectStatus, reviewAt?: string): Promise<ImprovementProject> {
-  const result = await postJson(`/api/projects/${encodeURIComponent(id)}/status`, { status, ...(reviewAt ? { reviewAt } : {}) }, projectResponseSchema, 'PATCH')
+export async function updateImprovementProjectStatus(id: string, status: ProjectStatus): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}/status`, { status }, projectResponseSchema, 'PATCH')
   return result.project
 }
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
-import { createProjectRequestSchema, improvementProjectSchema, projectListSchema, updateProjectContentRequestSchema, updateProjectContextRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
+import { createProjectRequestSchema, improvementProjectSchema, projectListSchema, stripLegacyProjectFields, updateProjectContentRequestSchema, updateProjectContextRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
 import { createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
   clearGoogleOAuthCookie,
@@ -161,7 +161,7 @@ app.get('/api/projects', async (c) => {
   ).bind(session.userId).all<{ project_json: string }>()
   const projects = rows.results.flatMap((row) => {
     try {
-      const parsed = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+      const parsed = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
       return parsed.success ? [parsed.data] : []
     } catch {
       return []
@@ -208,7 +208,7 @@ app.patch('/api/projects/:id/status', async (c) => {
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
   if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
   const now = new Date()
   const project = improvementProjectSchema.parse({
@@ -221,11 +221,10 @@ app.patch('/api/projects/:id/status', async (c) => {
       createdAt: now.toISOString(),
     }],
     updatedAt: now.toISOString(),
-    ...(input.data.reviewAt ? { reviewAt: input.data.reviewAt } : {}),
   })
   await c.env.DB.prepare(
-    'UPDATE improvement_projects SET status = ?, project_json = ?, updated_at = ?, review_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(project.status, JSON.stringify(project), now.getTime(), project.reviewAt ? Date.parse(project.reviewAt) : null, project.id, session.userId).run()
+    'UPDATE improvement_projects SET status = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+  ).bind(project.status, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
 })
 
@@ -242,7 +241,7 @@ app.patch('/api/projects/:id/context', async (c) => {
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
   if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
 
   const now = new Date()
@@ -278,7 +277,7 @@ app.patch('/api/projects/:id', async (c) => {
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
   if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
 
   const now = new Date()
@@ -312,9 +311,9 @@ app.onError((error, c) => {
     errorCode: deepSeekError || googleError ? error.code : 'internal',
   }))
 
-  if (deepSeekError) return errorResponse(error.code, 'AIの応答を検証できませんでした。再試行してください。', requestId, 502, [error.message, ...(error.details ?? [])])
+  if (deepSeekError) return errorResponse(error.code, '整理に失敗しました。もう一度お試しください。', requestId, 502, [error.message, ...(error.details ?? [])])
   if (googleError) return errorResponse(error.code, error.message, requestId, error.status)
-  if (error instanceof DOMException && error.name === 'TimeoutError') return errorResponse('timeout', 'AIの応答がタイムアウトしました。', requestId, 502)
+  if (error instanceof DOMException && error.name === 'TimeoutError') return errorResponse('timeout', '応答に時間がかかったため中断しました。もう一度お試しください。', requestId, 502)
   return errorResponse(
     'internal',
     '予期しないエラーが発生しました。',
