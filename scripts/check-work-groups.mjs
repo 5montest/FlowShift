@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { groupCalendarEvents, isLikelyPersonal, rankDiscoveryCandidates, summarizeWorkGroups } from '../shared/work-group.ts'
+import { applyCategories, categorizeWork, groupCalendarEvents, isLikelyPersonal, rankDiscoveryCandidates, summarizeWorkGroups, workClassificationRequestSchema, workClassificationResponseSchema } from '../shared/work-group.ts'
 
 const events = [
   { id: '1', title: '朝会', start: '2026-07-13T00:00:00.000Z', end: '2026-07-13T00:15:00.000Z', durationMinutes: 15, recurringEventId: 'daily', allDay: false },
@@ -36,5 +36,21 @@ assert.ok(!ranked.some((group) => group.title === '集中開発・コーディ�
 assert.equal(ranked[0]?.title, '売上レポート作成')
 assert.ok(ranked.some((group) => group.title === '資料レビュー'), '2+ occurrences with 2h+ total qualifies')
 assert.ok(!rankDiscoveryCandidates(rankGroups, ['売上レポート作成']).some((group) => group.title === '売上レポート作成'), 'excluded titles must not be suggested')
+
+// 分類：regexフォールバックとAI割り当ての適用
+assert.equal(categorizeWork('集中開発・コーディング（API連携モジュール実装）'), '開発・制作')
+assert.equal(categorizeWork('昼休憩'), '休憩・私用')
+assert.equal(categorizeWork('週次MTG'), '会議')
+assert.equal(categorizeWork('謎の予定'), 'その他')
+const applied = applyCategories(rankGroups, { '集中開発・コーディング': '開発・制作' })
+assert.equal(applied.find((group) => group.title === '集中開発・コーディング')?.category, '開発・制作')
+assert.equal(applied.find((group) => group.title === '売上レポート作成')?.category, '資料作成', 'unmapped titles keep their category')
+// 休憩・私用categoryは声かけから除外される（タイトル判定を通り抜けても）
+const sneakyBreak = { ...rankGroups[2], id: 'recurring:tea', title: 'ティータイム', category: '休憩・私用' }
+assert.ok(!rankDiscoveryCandidates([sneakyBreak]).length, 'personal category must be excluded from suggestions')
+assert.ok(workClassificationRequestSchema.safeParse({ titles: ['朝会'] }).success)
+assert.ok(!workClassificationRequestSchema.safeParse({ titles: [] }).success)
+assert.ok(workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '会議' }] }).success)
+assert.ok(!workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '謎分類' }] }).success)
 
 console.log('WorkGroup checks passed')

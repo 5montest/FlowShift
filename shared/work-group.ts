@@ -2,8 +2,22 @@ import { z } from 'zod'
 import type { CalendarEvent } from './calendar-schema'
 import { workObservationSchema, type WorkObservation } from './design-schema.ts'
 
-export const workCategorySchema = z.enum(['会議', '資料作成', 'データ処理', '顧客対応', 'その他'])
+// 分類の種類はアプリが固定する（AIに種類を発明させない＝週次比較が揺れない）。
+// 既存5値は保存済みデータ・下書きとの互換のため改名しない。
+export const workCategorySchema = z.enum(['会議', '資料作成', 'データ処理', '顧客対応', '開発・制作', '休憩・私用', 'その他'])
 export type WorkCategory = z.infer<typeof workCategorySchema>
+
+// タイトル→分類のAI割り当てAPI（タイトル以外は送らない）
+export const workClassificationRequestSchema = z.object({
+  titles: z.array(z.string().trim().min(1).max(500)).min(1).max(100),
+}).strict()
+
+export const workClassificationResponseSchema = z.object({
+  categories: z.array(z.object({
+    title: z.string().trim().min(1).max(500),
+    category: workCategorySchema,
+  }).strict()).max(100),
+}).strict()
 
 // WorkGroupは観測（WorkObservation）そのもの＋グルーピング情報。
 // 同じ6フィールドを二重定義しない。下書き（session draft）の検証にも使うためschema化している。
@@ -38,12 +52,23 @@ export function normalizeWorkTitle(title: string): string {
   return title.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ja-JP')
 }
 
+// 初期表示とAI分類が使えないときのフォールバック。正確な分類はclassifyWork（LLM）が上書きする。
 export function categorizeWork(title: string): WorkCategory {
-  if (/(会議|定例|ミーティング|朝会|夕会|1on1|面談|打ち合わせ)/i.test(title)) return '会議'
+  if (isLikelyPersonal(title)) return '休憩・私用'
+  if (/(会議|定例|ミーティング|朝会|夕会|1on1|面談|打ち合わせ|MTG)/i.test(title)) return '会議'
   if (/(レポート|報告|資料|提案書)/i.test(title)) return '資料作成'
   if (/(入力|登録|更新|転記|集計)/i.test(title)) return 'データ処理'
   if (/(顧客|問い合わせ|フォロー|商談)/i.test(title)) return '顧客対応'
+  if (/(開発|実装|コーディング|coding|設計|デバッグ|テスト|リリース|デプロイ|レビュー|制作|デザイン)/i.test(title)) return '開発・制作'
   return 'その他'
+}
+
+// 正規化タイトル→分類のmapで、該当するWorkGroupのcategoryだけを差し替える（冪等）
+export function applyCategories(groups: WorkGroup[], categories: Record<string, WorkCategory>): WorkGroup[] {
+  return groups.map((group) => {
+    const category = categories[normalizeWorkTitle(group.title)]
+    return category && category !== group.category ? { ...group, category } : group
+  })
 }
 
 export function groupCalendarEvents(events: CalendarEvent[]): WorkGroup[] {
@@ -97,6 +122,7 @@ export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iter
   const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
   const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
     && !isLikelyPersonal(group.title)
+    && group.category !== '休憩・私用'
     && ((group.occurrences >= 3 && group.recurring) || (group.occurrences >= 2 && group.totalMinutes >= 120)))
   const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)
   return [...eligible].sort((left, right) => soloFriendly(right) - soloFriendly(left)

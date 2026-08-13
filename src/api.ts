@@ -16,7 +16,7 @@ import {
   type ImprovementProject,
   type ProjectStatus,
 } from '../shared/project-schema'
-import { toObservation, type WorkGroup } from '../shared/work-group'
+import { normalizeWorkTitle, toObservation, workCategorySchema, type WorkCategory, type WorkGroup } from '../shared/work-group'
 
 const apiErrorSchema = z.object({
   error: z.object({
@@ -47,6 +47,11 @@ const designResponseSchema = z.object({
 })
 
 const projectResponseSchema = z.object({ project: improvementProjectSchema }).strict()
+
+const classifyResponseSchema = z.object({
+  categories: z.array(z.object({ title: z.string(), category: workCategorySchema }).passthrough()).max(100),
+  meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
+})
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -100,6 +105,13 @@ export async function disconnectGoogleCalendar(): Promise<void> {
   const payload: unknown = await response.json().catch(() => null)
   const error = apiErrorSchema.safeParse(payload)
   throw new ApiError(error.success ? error.data.error.code : 'network', error.success ? error.data.error.message : 'Google Calendarとの接続を解除できませんでした。')
+}
+
+export async function classifyWork(titles: string[]): Promise<Record<string, WorkCategory>> {
+  const result = await postJson('/api/classify-work', { titles }, classifyResponseSchema)
+  const map: Record<string, WorkCategory> = {}
+  for (const item of result.categories) map[normalizeWorkTitle(item.title)] = item.category
+  return map
 }
 
 export async function generateInterviewPlan(group: WorkGroup): Promise<InterviewPlan> {

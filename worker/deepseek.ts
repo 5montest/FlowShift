@@ -11,6 +11,7 @@ import {
   type InterviewRequest,
 } from '../shared/design-schema.ts'
 import { finalizeBusinessTask } from '../shared/interview.ts'
+import { workClassificationResponseSchema } from '../shared/work-group.ts'
 
 // プロンプト内の出力形式はZodスキーマから生成する（手書き転記による乖離を防ぐ）。
 // refine/superRefineはJSON Schemaに現れないが、応答はZodで検証され修復ループが働く。
@@ -191,6 +192,22 @@ ${schemaInstruction(designOutputSchema)}`
 export async function extractBusinessTask(apiKey: string, input: InterviewRequest): Promise<DeepSeekResult<BusinessTask>> {
   const result = await generateJson<BusinessTaskDraft>(apiKey, businessTaskPrompt, input, businessTaskDraftSchema)
   return { ...result, value: finalizeBusinessTask(input.observation, input.answers, result.value) }
+}
+
+const classifyWorkPrompt = `あなたはFlowShiftの業務分類係です。カレンダーの予定タイトルだけを手がかりに、各タイトルを次の7分類のいずれか1つへ割り当てます。
+- 会議: 定例・打ち合わせ・1on1・面談など、人が同期的に集まる予定
+- 資料作成: レポート・提案書・ドキュメントなどの作成
+- データ処理: 入力・登録・更新・転記・集計などの事務処理
+- 顧客対応: 商談・問い合わせ対応・顧客フォロー
+- 開発・制作: 実装・設計・コーディング・テスト・レビュー・デザインなどの制作作業
+- 休憩・私用: 昼食・休憩・移動・通院・休暇など業務でない予定
+- その他: 上記のどれとも判断できないもの
+タイトル以外の情報はありません。推測しすぎず、迷ったら「その他」にしてください。
+入力のtitles配列の各要素について、titleを一字一句そのまま返し、categoryを割り当ててください。
+${schemaInstruction(workClassificationResponseSchema)}`
+
+export async function classifyWork(apiKey: string, titles: string[]): Promise<DeepSeekResult<z.infer<typeof workClassificationResponseSchema>>> {
+  return generateJson(apiKey, classifyWorkPrompt, { titles }, workClassificationResponseSchema, 4000)
 }
 
 export async function createInterviewOptions(apiKey: string, input: unknown): Promise<DeepSeekResult<InterviewPlan>> {

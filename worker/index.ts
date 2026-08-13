@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
 import { createProjectRequestSchema, improvementProjectSchema, parseStoredProject, projectListSchema, projectName, updateProjectRequestSchema, type ImprovementProject } from '../shared/project-schema'
-import { createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
+import { workClassificationRequestSchema } from '../shared/work-group'
+import { classifyWork, createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
   clearGoogleOAuthCookie,
   clearGoogleSessionCookie,
@@ -42,7 +43,7 @@ function mutationGuard(c: { req: { raw: Request; url: string; header: (name: str
   return null
 }
 
-const aiPaths = new Set(['/api/interview-options', '/api/follow-up-questions', '/api/business-task', '/api/design'])
+const aiPaths = new Set(['/api/interview-options', '/api/follow-up-questions', '/api/business-task', '/api/design', '/api/classify-work'])
 
 // セッションはここで一度だけ解決し、各ルートはc.get('session')を読む
 app.use('/api/*', async (c, next) => {
@@ -140,6 +141,10 @@ aiRoute('/api/follow-up-questions', followUpRequestSchema, async (apiKey, input)
 aiRoute('/api/design', designRequestSchema, async (apiKey, input) => {
   const result = await createBusinessDesign(apiKey, input.businessTask)
   return { body: { design: { businessTask: input.businessTask, ...result.value } }, usage: result.usage }
+})
+aiRoute('/api/classify-work', workClassificationRequestSchema, async (apiKey, input) => {
+  const result = await classifyWork(apiKey, input.titles)
+  return { body: { categories: result.value.categories }, usage: result.usage }
 })
 
 app.get('/api/projects', async (c) => {

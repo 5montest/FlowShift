@@ -33,6 +33,19 @@ if (process.argv.includes('--skip-ai')) {
   process.exit(0)
 }
 
+const classifyResponse = await fetch(`${baseUrl}/api/classify-work`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ titles: ['昼休憩', '売上レポート作成', 'API連携モジュール実装'] }),
+})
+const classifyResult = await classifyResponse.json()
+assert.equal(classifyResponse.status, 200, `Work classification failed: ${JSON.stringify(classifyResult)}`)
+assert.ok(Array.isArray(classifyResult.categories) && classifyResult.categories.length >= 1)
+const validCategories = new Set(['会議', '資料作成', 'データ処理', '顧客対応', '開発・制作', '休憩・私用', 'その他'])
+for (const item of classifyResult.categories) {
+  assert.ok(validCategories.has(item.category), `unexpected category: ${item.category}`)
+}
+
 const optionsResponse = await fetch(`${baseUrl}/api/interview-options`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },

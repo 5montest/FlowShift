@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { fallbackCorePlan } from '../shared/context-questions'
 import { createDeterministicTask } from '../shared/interview'
 import { projectContext, projectName } from '../shared/project-schema'
-import { groupCalendarEvents, rankDiscoveryCandidates, toObservation } from '../shared/work-group'
+import { applyCategories, groupCalendarEvents, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
 import {
   ApiError,
+  classifyWork,
   createImprovementProject,
   deleteImprovementProject,
   disconnectGoogleCalendar,
@@ -21,6 +22,7 @@ import {
   updateImprovementProjectStatus,
 } from './api'
 import AppHeader from './components/AppHeader'
+import { mergeCategoryCache, readCategoryCache } from './lib/categories'
 import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
 import { listMutedWork, muteWork, unmuteWork } from './lib/preferences'
 import ConnectScreen from './screens/ConnectScreen'
@@ -167,13 +169,30 @@ export default function App() {
     }
   }
 
+  // regex分類のままのタイトルをAIに分類させ、返ってきたら差し替える。
+  // タイトルキーの上書きなので、途中で再読込されても安全（冪等）。
+  function refineCategoriesInBackground(groups: WorkGroup[], cached: Record<string, WorkCategory>) {
+    const unclassified = [...new Set(groups.filter((group) => !(normalizeWorkTitle(group.title) in cached)).map((group) => group.title))].slice(0, 100)
+    if (!unclassified.length) return
+    void classifyWork(unclassified)
+      .then((map) => {
+        mergeCategoryCache(map)
+        setGroups((current) => applyCategories(current, map))
+      })
+      .catch(() => {
+        // 分類できなくてもregexフォールバックのまま表示できる
+      })
+  }
+
   async function loadWorkspace() {
     setCalendarBusy(true); setCalendarError('')
     try {
       const [calendarResult, savedProjects] = await Promise.all([getGoogleCalendarEvents(), getImprovementProjects()])
-      const nextGroups = groupCalendarEvents(calendarResult.events)
+      const cachedCategories = readCategoryCache()
+      const nextGroups = applyCategories(groupCalendarEvents(calendarResult.events), cachedCategories)
       planCache.current.clear()
       setGroups(nextGroups)
+      refineCategoriesInBackground(nextGroups, cachedCategories)
       setCalendarRange(calendarResult.range ?? null)
       setFetchedAt(new Date())
       setProjects(savedProjects)
