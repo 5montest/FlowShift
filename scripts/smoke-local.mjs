@@ -131,8 +131,14 @@ const designResponse = await fetch(`${baseUrl}/api/design`, {
 const designResult = await designResponse.json()
 assert.equal(designResponse.status, 200, `Business redesign generation failed: ${JSON.stringify(designResult)}`)
 assert.equal(designResult.design?.analysis?.readiness, 'NEEDS_CONTEXT')
-assert.equal(designResult.design?.redesign?.strategy, 'KEEP')
-assert.match(designResult.design?.redesign?.hypothesis, new RegExp(consultationOption.meaning.roles.find((role) => role.present).name))
+// 判断保留でも具体案は描く（KEEPへ逃げない）。ELIMINATEだけはsuperRefineが禁じている
+assert.ok(['AUTOMATE', 'ON_DEMAND', 'KEEP'].includes(designResult.design?.redesign?.strategy), `unexpected strategy: ${designResult.design?.redesign?.strategy}`)
+const confirmedRoleName = consultationOption.meaning.roles.find((role) => role.present).name
+const roleRegex = new RegExp(confirmedRoleName)
+assert.ok(
+  roleRegex.test(designResult.design?.redesign?.hypothesis ?? '') || roleRegex.test(designResult.design?.redesign?.roleNote ?? ''),
+  'confirmed role must be stated in hypothesis or roleNote',
+)
 assert.ok(!designResult.design?.analysis?.unknowns?.some((item) => item.includes('相談')))
 assert.equal(typeof designResult.design?.redesign?.hypothesis, 'string')
 assert.ok(designResult.design?.analysis?.unknowns?.length > 0)

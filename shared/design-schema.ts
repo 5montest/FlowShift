@@ -243,18 +243,23 @@ export const designOutputSchema = z.object({
   redesign: z.object({
     strategy: redesignStrategySchema,
     hypothesis: z.string().trim().min(1).max(200),
+    // 確認済み役割の維持を明記する定型文。hypothesis本文が役割に触れていない場合だけ
+    // finalizeBusinessDesignが設定する（本文への機械連結は文切れを起こすためやめた）
+    roleNote: sentence.optional(),
     headline: sentence,
     workflow: z.array(workflowStepSchema).min(3).max(7),
     roles: z.object({ system: textList, ai: textList, human: z.array(shortText).min(1).max(12) }).strict(),
+    // 比較行は意味のあるものだけ埋める（無変化・該当なしの行はキーごと省略）。
+    // 旧データは全フィールドを持つため、optional化は後方互換。
     metrics: z.object({
-      scheduledOutputBefore: shortText,
-      scheduledOutputAfter: shortText,
-      routineHumanWorkBefore: shortText,
-      routineHumanWorkAfter: shortText,
-      detectionBefore: shortText,
-      detectionAfter: shortText,
-      outputBefore: shortText,
-      outputAfter: shortText,
+      scheduledOutputBefore: shortText.optional(),
+      scheduledOutputAfter: shortText.optional(),
+      routineHumanWorkBefore: shortText.optional(),
+      routineHumanWorkAfter: shortText.optional(),
+      detectionBefore: shortText.optional(),
+      detectionAfter: shortText.optional(),
+      outputBefore: shortText.optional(),
+      outputAfter: shortText.optional(),
     }).strict(),
     impact: z.object({ assumption: sentence }).strict(),
   }).strict(),

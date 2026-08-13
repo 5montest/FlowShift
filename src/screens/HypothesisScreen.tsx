@@ -2,7 +2,7 @@ import { ArrowRight, Bot, CircleAlert, CircleCheck, CircleHelp, Cog, FlaskConica
 import ToolTitle from '../components/ToolTitle'
 import WorkflowDiagram from '../components/WorkflowDiagram'
 import { formatMinutes } from '../lib/format'
-import { contextLabels, validationLabels } from '../lib/labels'
+import { contextLabels, redesignStrategyLabels, validationLabels } from '../lib/labels'
 import { useAsyncAction } from '../lib/useAsync'
 import type { BusinessDesign, BusinessTask, ImprovementProject } from '../types'
 
@@ -21,12 +21,13 @@ export default function HypothesisScreen({ task, design, designError, savedProje
   const { status, errorMessage, run } = useAsyncAction()
   const needsContext = design?.analysis.readiness === 'NEEDS_CONTEXT'
   const blockingKeys = (['constraints', 'dependencies', 'risks'] as const).filter((key) => task.contextStatus[key] === 'UNKNOWN')
-  const comparisons = design ? [
+  // 比較行はbefore/afterが揃っている行だけ描画する（無変化・該当なしの行は生成時に省略される）
+  const comparisons = design ? ([
     ['定期業務', design.redesign.metrics.scheduledOutputBefore, design.redesign.metrics.scheduledOutputAfter],
     ['人の定期作業', design.redesign.metrics.routineHumanWorkBefore, design.redesign.metrics.routineHumanWorkAfter],
     ['変化の検知', design.redesign.metrics.detectionBefore, design.redesign.metrics.detectionAfter],
     ['成果物', design.redesign.metrics.outputBefore, design.redesign.metrics.outputAfter],
-  ] as const : []
+  ] as const).filter(([, before, after]) => Boolean(before && after)) : []
 
   return <main className="tool-main">
     <ToolTitle title={`再設計仮説：${task.name}`} summary="これは決定ではありません。前提を確かめながら、あなたが直していく仮説です。" />
@@ -41,13 +42,13 @@ export default function HypothesisScreen({ task, design, designError, savedProje
       {design && <>
         <div className={`judgement ${needsContext ? 'needs-context' : ''}`}>
           {needsContext ? <CircleAlert size={20} /> : <FlaskConical size={20} />}
-          <strong>{needsContext ? '判断保留' : '検証候補'}</strong>
+          <strong>{needsContext ? '判断保留' : '検証候補'}<small className="strategy-label">{redesignStrategyLabels[design.redesign.strategy]}</small></strong>
           <div>
             <p>{design.analysis.conclusion}</p>
             {needsContext && blockingKeys.length > 0 && <p className="judgement-hint">{blockingKeys.map((key) => contextLabels[key]).join('・')}を確認すると、判断できるようになります。<button type="button" className="text-button" onClick={onBackToSession}>整理に戻って追加する</button></p>}
           </div>
         </div>
-        <div className="result-headline"><h2>{design.redesign.headline}</h2><p>{design.redesign.hypothesis}</p></div>
+        <div className="result-headline"><h2>{design.redesign.headline}</h2><p>{design.redesign.hypothesis}</p>{design.redesign.roleNote && <p className="role-note">{design.redesign.roleNote}</p>}</div>
         <div className="metric-compare">
           <div className="metric-head"><span></span><strong>現在</strong><strong>仮説</strong></div>
           <div><span>観測</span><p>{task.observed.occurrences}回 / 4週間・合計{formatMinutes(task.observed.totalMinutes)}</p><p>—</p></div>

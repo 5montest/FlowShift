@@ -9,7 +9,7 @@ import { questionForContext } from '../../shared/context-questions'
 import { projectContext, projectName } from '../../shared/project-schema'
 import { computeReduction } from '../../shared/work-group'
 import { formatMinutes } from '../lib/format'
-import { projectStatusLabels, validationLabels } from '../lib/labels'
+import { projectStatusLabels, redesignStrategyLabels, validationLabels } from '../lib/labels'
 import { useAsyncAction } from '../lib/useAsync'
 import type { ImprovementProject, InterviewAnswer, ProjectStatus, WorkGroup } from '../types'
 
@@ -48,7 +48,7 @@ export default function NoteScreen({ project, currentGroups, onAddContext, onUpd
         <SummaryItem title="関係者">{context.stakeholders.length ? context.stakeholders.join('、') : '未確認'}</SummaryItem>
         <SummaryItem title="確認済みの役割">{roleDetails.length ? <ul>{roleDetails.map((role) => <li key={role.name}>{role.name}{role.scope !== 'ALL' ? ` — ${role.scopeDetail ?? '条件付き'}` : ''}</li>)}</ul> : '未確認'}</SummaryItem>
       </dl></section>
-      <section className="project-hypothesis-panel"><h2><Lightbulb size={18} className="heading-icon" />再設計仮説</h2><h3>{project.proposal.redesign.headline}</h3><p>{project.proposal.redesign.hypothesis}</p></section>
+      <section className="project-hypothesis-panel"><h2><Lightbulb size={18} className="heading-icon" />再設計仮説<small className="strategy-label">{redesignStrategyLabels[project.proposal.redesign.strategy]}</small></h2><h3>{project.proposal.redesign.headline}</h3><p>{project.proposal.redesign.hypothesis}</p>{project.proposal.redesign.roleNote && <p className="role-note">{project.proposal.redesign.roleNote}</p>}</section>
     </div>
     <section className="project-unknowns"><header><h2><CircleHelp size={18} className="heading-icon" />先に確認したいこと</h2><p>現場で分かったことを追加します。追加した内容は「仮説を更新する」で反映されます。</p></header>
       {unknowns.length ? unknowns.map((unknown) => <article key={unknown.id}>

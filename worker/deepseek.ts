@@ -156,6 +156,7 @@ ${schemaInstruction(interviewPlanSchema)}`
 
 const followUpPrompt = `あなたはFlowShiftのAdaptive Interview設計役です。暫定BusinessTaskを確認し、再設計判断を左右するCritical Unknownだけを追加質問にします。
 phaseはFOLLOW_UP、質問数は0〜4問です。確認済みの内容を聞き直さず、制約・例外・業務の隠れた役割・他部署への影響・変更リスクのうち、仮説を変え得るものだけを選んでください。十分ならquestionsを空配列にします。
+contextStatusでconstraints・dependencies・risksがUNKNOWNのものは採用判断を止める最重要事項です。UNKNOWNが残っていれば、その次元の質問を必ず1問以上含めてください。
 各質問には3〜6個の選択肢を付けます。「情報がある／ない」ではなく内容を聞いてください。関係者は具体的な対象をmeaning.stakeholders、現在工程は具体的な行為をmeaning.processItemsへ保存し、複数該当する質問はselectionをMULTIPLEにします。役割はmeaning.rolesへ具体名、present、scope（ALL | PARTIAL | CONDITIONAL | UNKNOWN）、必要ならscopeDetailを保存します。「まだ分からない」はcontextStateをUNKNOWNにします。
 存在だけ分かって具体的な対象が分からない場合、その項目をCONFIRMEDにしないでください。
 phaseは常にFOLLOW_UP、質問idはfollowup-trainingのような一意な英数字です。
@@ -181,11 +182,15 @@ function designPromptFor(task: BusinessTask): string {
 - AIは最終判断者ではない。Calendar情報だけで廃止・自動化を断定しない。
 - businessTask.answerEvidenceの原文とmeaningはユーザー回答の正本であり、別の意味へ解釈し直さない。businessRolesにある役割を「未確認」と書かない。
 - factsは観測事実と回答済み事項だけ。成立条件はassumptions、判断前の不足情報はunknownsへ分ける。
-- constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXT、strategyはKEEPとし、conclusionで廃止可否を判断できない旨を示す。
-- HYPOTHESIS_READYでもhypothesisは「〜であり、〜が存在しない場合、〜へ変更できる可能性がある」という条件付き表現にする。hypothesisは全角200字以内に収める。
+- readiness（採用判断できるか）とredesign（案の具体性）は別物。constraints、dependencies、risksのいずれかがUNKNOWNならreadinessはNEEDS_CONTEXTにするが、redesignはreadinessに関わらず最も価値のある具体案を描く。strategyは案の実体（AUTOMATE・ON_DEMAND・ELIMINATE・KEEP）で選び、未確認を理由にKEEPへ逃げない。
+- conclusionは3文以内。NEEDS_CONTEXTでは「何が確認できれば採用判断できるか」を示し、案が無いかのような書き方をしない。
+- headlineは変更案を手段込みの1文（全角60字以内目安）で書く。例：「Kintone APIでの自動抽出とスプレッドシートへの自動反映に置き換える」。workflowとmetricsのafter側はheadlineの案と一致させる。「現状維持」と書くのはstrategyがKEEPのときだけ。
+- hypothesisは「〜が確認できれば、〜へ変更できる」という条件付きの前向き表現にし、全角200字以内に収める。
+- assumptionsとunknownsは仮説の成否に関わるものだけを各5件以内。unknownsにvalidationPlan.itemsの言い換えを繰り返さない。
 - 「この作業をAIで速くする」より「そもそもこの作業・成果物は必要か」を先に検討する。ただし不要と確認されていないものを消さない。
 - systemは決定論的な取得・通知、aiは意味整理・候補提示、人は確認・判断を担当する。
 - 時間は入力頻度を変換せず、根拠のない年間換算や精密値を作らない。
+- metricsは意味のある比較だけを書く。この業務で変化しない・該当しない行はbefore/afterともキーごと省略する。
 - validationPlanは固定期間にせず、案に応じてPILOT、TECHNICAL_FEASIBILITY、OFFLINE_EVALUATION、REQUIREMENT_VALIDATION、STAKEHOLDER_REVIEWから必要な方法だけを選ぶ。
 ${dynamicRules.join('\n')}
 ${schemaInstruction(designOutputSchema)}`
@@ -231,9 +236,10 @@ export async function createFollowUpQuestions(apiKey: string, businessTask: Busi
 }
 
 // 回答忠実性の不変条件だけを決定論で保証する：
-// ①確認済みの役割は人の担当に含まれ、hypothesisに明記され、unknownsに落ちないこと
+// ①確認済みの役割は人の担当に含まれ、hypothesis本文またはroleNoteに明記され、unknownsに落ちないこと
 // ②「必要」と確認された成果物・形式を廃止しないこと。
 // 見出しやmetricsの機械的な上書きは行わない（表現はプロンプト側の責務）。
+// roleNoteは別フィールド：以前はhypothesis本文へ連結していたが、200字制限で本文が切れて文が壊れていた。
 function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput): DesignOutput {
   const requiredRoles = businessTask.businessRoles
   const roleLabels = businessTask.businessRoleDetails.filter((role) => role.present).map((role) => role.scope === 'ALL' ? role.name : `${role.name}（${role.scopeDetail ?? '条件付き'}）`)
@@ -241,23 +247,23 @@ function finalizeBusinessDesign(businessTask: BusinessTask, design: DesignOutput
   const roleIsMentioned = (value: string) => roleKeywords.some((keyword) => value.includes(keyword))
   const unknowns = design.analysis.unknowns.filter((item) => !roleIsMentioned(item))
   const criticalUnknowns = design.analysis.criticalUnknowns.filter((item) => !roleIsMentioned(item.question))
-  const roleNote = roleLabels.length ? `確認済みの役割（${roleLabels.join('・')}）は、その範囲を変えずに残します。` : ''
-  const combinedHypothesis = roleNote && !roleIsMentioned(design.redesign.hypothesis)
-    ? `${design.redesign.hypothesis} ${roleNote}`
-    : design.redesign.hypothesis
-  const hypothesis = combinedHypothesis.length <= 200
-    ? combinedHypothesis
-    : `${design.redesign.hypothesis.slice(0, Math.max(1, 199 - roleNote.length))} ${roleNote}`
+  const roleNote = roleLabels.length && !roleIsMentioned(design.redesign.hypothesis)
+    ? `確認済みの役割（${roleLabels.join('・')}）は、その範囲を変えずに残します。`
+    : undefined
+
+  // roleNoteは「確認済み役割の維持」専用の定型欄。LLMが自由記述で埋めてきても、ここで常に上書き・削除する
+  const redesign = {
+    ...design.redesign,
+    ...(businessTask.outputRequirement === 'REQUIRED' ? { strategy: 'KEEP' as const } : {}),
+    roles: { ...design.redesign.roles, human: [...new Set([...design.redesign.roles.human, ...requiredRoles])] },
+  }
+  if (roleNote) redesign.roleNote = roleNote
+  else delete redesign.roleNote
 
   return designOutputSchemaFor(businessTask).parse({
     ...design,
     analysis: { ...design.analysis, unknowns, criticalUnknowns },
-    redesign: {
-      ...design.redesign,
-      ...(businessTask.outputRequirement === 'REQUIRED' ? { strategy: 'KEEP' as const } : {}),
-      hypothesis,
-      roles: { ...design.redesign.roles, human: [...new Set([...design.redesign.roles.human, ...requiredRoles])] },
-    },
+    redesign,
   })
 }
 

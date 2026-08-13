@@ -281,6 +281,8 @@ img.account-chip { object-fit: cover; }
 .judgement.needs-context { border-left-color: var(--fs-color-assumption); background: var(--fs-color-assumption-soft); }
 .judgement > svg { flex: 0 0 auto; margin-top: 2px; margin-right: -10px; color: var(--fs-color-brand); }
 .judgement.needs-context > svg { color: var(--fs-color-assumption); }
+.strategy-label { display: inline-block; margin-left: 10px; padding: 3px 8px; color: var(--fs-color-text-secondary); border: 1px solid var(--fs-color-border-medium); background: var(--fs-color-surface); font-size: var(--fs-type-dense-size); font-weight: 800; white-space: nowrap; }
+.role-note { margin: 8px 0 0; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); line-height: 1.6; }
 .judgement strong { flex: 0 0 auto; font-size: var(--fs-type-body-size); }
 .judgement p { margin: 0; font-size: var(--fs-type-body-size); line-height: 1.7; }
 .judgement-hint { margin-top: 8px !important; color: var(--fs-color-text-secondary); font-size: var(--fs-type-dense-size); }

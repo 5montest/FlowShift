@@ -90,6 +90,7 @@ export function questionForContext(key: ContextDimension): InterviewPlan {
         { id: 'risk-miss', label: '重要な変更・異常の見逃し', meaning: { roles: [], contextState: 'CONFIRMED' } },
         { id: 'risk-consult', label: '相談や支援の機会が減ること', meaning: { roles: [{ name: '困りごとの相談と担当調整', present: true, scope: 'ALL' }], contextState: 'CONFIRMED' } },
         { id: 'risk-responsibility', label: '責任所在が曖昧になること', meaning: { roles: [], contextState: 'CONFIRMED' } },
+        { id: 'risk-none', label: '変えても大きな影響はない', exclusive: true, meaning: { roles: [], contextState: 'CONFIRMED' } },
         { id: 'risk-unknown', label: 'まだ整理できていない', exclusive: true, meaning: { roles: [], contextState: 'UNKNOWN' } },
       ],
     },

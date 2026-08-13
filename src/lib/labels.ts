@@ -10,6 +10,10 @@ export const validationLabels = {
   REQUIREMENT_VALIDATION: '要件確認', STAKEHOLDER_REVIEW: '関係者確認',
 } as const
 
+export const redesignStrategyLabels = {
+  AUTOMATE: '自動化案', ON_DEMAND: 'オンデマンド化案', ELIMINATE: '廃止案', KEEP: '現状維持案',
+} as const
+
 export const projectStatusLabels: Record<ProjectStatus, string> = {
   DRAFT: '判断前', VALIDATING: '検証中', ADOPTED: '採用', REJECTED: '却下', ON_HOLD: '保留',
 }
