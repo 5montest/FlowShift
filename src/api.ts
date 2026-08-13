@@ -36,6 +36,11 @@ const interviewPlanResponseSchema = z.object({
   meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
 })
 
+const followUpPlanResponseSchema = z.object({
+  plan: interviewPlanSchema,
+  meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
+})
+
 const designResponseSchema = z.object({
   design: businessDesignSchema,
   meta: z.object({ model: z.string(), requestId: z.string() }).passthrough(),
@@ -115,8 +120,17 @@ export async function generateInterviewPlan(group: WorkGroup): Promise<Interview
 }
 
 export async function extractBusinessTask(answers: InterviewAnswer[], group: WorkGroup): Promise<BusinessTask> {
-  const result = await postJson('/api/business-task', { observation: observationFrom(group), answers }, businessTaskResponseSchema)
+  return extractBusinessTaskFromObservation(answers, observationFrom(group))
+}
+
+export async function extractBusinessTaskFromObservation(answers: InterviewAnswer[], observation: WorkObservation): Promise<BusinessTask> {
+  const result = await postJson('/api/business-task', { observation, answers }, businessTaskResponseSchema)
   return result.businessTask
+}
+
+export async function generateFollowUpPlan(businessTask: BusinessTask): Promise<InterviewPlan> {
+  const result = await postJson('/api/follow-up-questions', { businessTask }, followUpPlanResponseSchema)
+  return result.plan
 }
 
 export async function generateBusinessDesign(businessTask: BusinessTask): Promise<BusinessDesign> {
@@ -142,5 +156,25 @@ export async function createImprovementProject(design: BusinessDesign): Promise<
 
 export async function updateImprovementProjectStatus(id: string, status: ProjectStatus, reviewAt?: string): Promise<ImprovementProject> {
   const result = await postJson(`/api/projects/${encodeURIComponent(id)}/status`, { status, ...(reviewAt ? { reviewAt } : {}) }, projectResponseSchema, 'PATCH')
+  return result.project
+}
+
+export async function updateImprovementProject(id: string, design: BusinessDesign, revisionSummary?: string): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
+    taskName: design.businessTask.name,
+    businessContext: design.businessTask,
+    proposal: design,
+    hypothesis: design.redesign.hypothesis,
+    validations: design.validationPlan.items,
+    ...(revisionSummary ? { revisionSummary } : {}),
+  }, projectResponseSchema, 'PATCH')
+  return result.project
+}
+
+export async function updateImprovementProjectContext(id: string, businessContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
+  const result = await postJson(`/api/projects/${encodeURIComponent(id)}/context`, {
+    businessContext,
+    revisionSummary,
+  }, projectResponseSchema, 'PATCH')
   return result.project
 }

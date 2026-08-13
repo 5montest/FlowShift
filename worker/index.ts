@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
-import { designRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
-import { createProjectRequestSchema, improvementProjectSchema, projectListSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
-import { createBusinessDesign, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
+import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
+import { createProjectRequestSchema, improvementProjectSchema, projectListSchema, updateProjectContentRequestSchema, updateProjectContextRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
+import { createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
   clearGoogleOAuthCookie,
   clearGoogleSessionCookie,
@@ -16,6 +16,7 @@ import {
 } from './google-calendar'
 
 const app = new Hono<{ Bindings: Env }>()
+const projectStatusLabels = { DRAFT: '下書き', VALIDATING: '検証中', ADOPTED: '採用', REJECTED: '却下', ON_HOLD: '保留' } as const
 
 function isLocalRequest(request: Request): boolean {
   const hostname = new URL(request.url).hostname
@@ -31,7 +32,7 @@ function errorResponse(code: string, message: string, requestId: string, status:
   return Response.json({ error: { code, message, requestId, ...(details ? { details } : {}) } }, { status })
 }
 
-const aiPaths = new Set(['/api/interview-options', '/api/business-task', '/api/design'])
+const aiPaths = new Set(['/api/interview-options', '/api/follow-up-questions', '/api/business-task', '/api/design'])
 
 app.use('/api/*', async (c, next) => {
   const path = new URL(c.req.url).pathname
@@ -122,6 +123,21 @@ app.post('/api/business-task', async (c) => {
   })
 })
 
+app.post('/api/follow-up-questions', async (c) => {
+  const requestId = crypto.randomUUID()
+  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
+
+  const body = await c.req.json<unknown>().catch(() => null)
+  const input = followUpRequestSchema.safeParse(body)
+  if (!input.success) return errorResponse('invalid_request', 'BusinessTask input is invalid.', requestId, 400)
+
+  const result = await createFollowUpQuestions(c.env.DEEPSEEK_API_KEY, input.data.businessTask)
+  return c.json({
+    plan: result.value,
+    meta: { requestId, model: deepSeekModel, usage: result.usage },
+  })
+})
+
 app.post('/api/design', async (c) => {
   const requestId = crypto.randomUUID()
   if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
@@ -169,6 +185,8 @@ app.post('/api/projects', async (c) => {
     id: crypto.randomUUID(),
     ...input.data,
     status: 'DRAFT',
+    contextDirty: false,
+    history: [{ id: crypto.randomUUID(), type: 'CREATED', summary: '再設計仮説を保存', createdAt: now.toISOString() }],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   })
@@ -196,12 +214,90 @@ app.patch('/api/projects/:id/status', async (c) => {
   const project = improvementProjectSchema.parse({
     ...current.data,
     status: input.data.status,
+    history: [...current.data.history, {
+      id: crypto.randomUUID(),
+      type: 'STATUS_UPDATED',
+      summary: `状態を「${projectStatusLabels[input.data.status]}」へ変更`,
+      createdAt: now.toISOString(),
+    }],
     updatedAt: now.toISOString(),
     ...(input.data.reviewAt ? { reviewAt: input.data.reviewAt } : {}),
   })
   await c.env.DB.prepare(
     'UPDATE improvement_projects SET status = ?, project_json = ?, updated_at = ?, review_at = ? WHERE id = ? AND user_id = ?',
   ).bind(project.status, JSON.stringify(project), now.getTime(), project.reviewAt ? Date.parse(project.reviewAt) : null, project.id, session.userId).run()
+  return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
+})
+
+app.patch('/api/projects/:id/context', async (c) => {
+  const requestId = crypto.randomUUID()
+  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
+  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
+  const session = await getGoogleSession(c.req.raw, c.env)
+  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
+  const input = updateProjectContextRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
+  if (!input.success) return errorResponse('invalid_request', 'Business context input is invalid.', requestId, 400)
+
+  const row = await c.env.DB.prepare(
+    'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
+  ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
+  if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
+  const current = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+  if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
+
+  const now = new Date()
+  const project = improvementProjectSchema.parse({
+    ...current.data,
+    taskName: input.data.businessContext.name,
+    businessContext: input.data.businessContext,
+    contextDirty: true,
+    history: [...current.data.history, {
+      id: crypto.randomUUID(),
+      type: 'CONTEXT_UPDATED',
+      summary: input.data.revisionSummary,
+      createdAt: now.toISOString(),
+    }],
+    updatedAt: now.toISOString(),
+  })
+  await c.env.DB.prepare(
+    'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+  ).bind(project.taskName, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
+  return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
+})
+
+app.patch('/api/projects/:id', async (c) => {
+  const requestId = crypto.randomUUID()
+  if (c.req.header('Origin') !== new URL(c.req.url).origin) return errorResponse('invalid_origin', 'リクエスト元を確認できません。', requestId, 403)
+  if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
+  const session = await getGoogleSession(c.req.raw, c.env)
+  if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
+  const input = updateProjectContentRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
+  if (!input.success) return errorResponse('invalid_request', 'ImprovementProject input is invalid.', requestId, 400)
+
+  const row = await c.env.DB.prepare(
+    'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
+  ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
+  if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
+  const current = improvementProjectSchema.safeParse(JSON.parse(row.project_json))
+  if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
+
+  const now = new Date()
+  const { revisionSummary, ...content } = input.data
+  const project = improvementProjectSchema.parse({
+    ...current.data,
+    ...content,
+    contextDirty: false,
+    history: [...current.data.history, {
+      id: crypto.randomUUID(),
+      type: 'HYPOTHESIS_UPDATED',
+      summary: revisionSummary ?? '追加した業務情報を反映して仮説を更新',
+      createdAt: now.toISOString(),
+    }],
+    updatedAt: now.toISOString(),
+  })
+  await c.env.DB.prepare(
+    'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+  ).bind(project.taskName, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
 })
 
@@ -219,7 +315,13 @@ app.onError((error, c) => {
   if (deepSeekError) return errorResponse(error.code, 'AIの応答を検証できませんでした。再試行してください。', requestId, 502, [error.message, ...(error.details ?? [])])
   if (googleError) return errorResponse(error.code, error.message, requestId, error.status)
   if (error instanceof DOMException && error.name === 'TimeoutError') return errorResponse('timeout', 'AIの応答がタイムアウトしました。', requestId, 502)
-  return errorResponse('internal', '予期しないエラーが発生しました。', requestId, 500)
+  return errorResponse(
+    'internal',
+    '予期しないエラーが発生しました。',
+    requestId,
+    500,
+    isLocalRequest(c.req.raw) && error instanceof Error ? [error.message] : undefined,
+  )
 })
 
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'API endpoint not found.' } }, 404))

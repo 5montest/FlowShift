@@ -19,9 +19,12 @@ export const workObservationSchema = z.object({
   recurring: z.boolean(),
 }).strict()
 
+export const contextStateSchema = z.enum(['CONFIRMED', 'PARTIAL', 'UNKNOWN'])
+export const roleScopeSchema = z.enum(['ALL', 'PARTIAL', 'CONDITIONAL', 'UNKNOWN'])
 export const contextDimensionSchema = z.enum([
   'purpose',
   'stakeholders',
+  'roles',
   'process',
   'decision',
   'exceptions',
@@ -31,32 +34,86 @@ export const contextDimensionSchema = z.enum([
   'outputNeed',
 ])
 
+export const optionMeaningSchema = z.object({
+  outputNeed: z.enum(['ASYNC_OK', 'ON_DEMAND', 'SYNC_DISCUSSION_STILL_REQUIRED', 'CURRENT_FORMAT_REQUIRED', 'UNKNOWN']).optional(),
+  roles: z.array(z.object({
+    name: shortText,
+    present: z.boolean(),
+    scope: roleScopeSchema.optional(),
+    scopeDetail: shortText.optional(),
+  }).strict()).max(6).default([]),
+  stakeholders: textList.optional(),
+  processItems: textList.optional(),
+  contextState: contextStateSchema.default('CONFIRMED'),
+}).strict().superRefine((meaning, context) => {
+  const hasRequiredRole = meaning.roles.some((role) => role.present)
+  if (meaning.outputNeed === 'SYNC_DISCUSSION_STILL_REQUIRED' && !hasRequiredRole) {
+    context.addIssue({ code: 'custom', path: ['roles'], message: '同期の相談が必要な選択肢には、残す役割を指定してください。' })
+  }
+})
+
+export const interviewOptionSchema = z.object({
+  id: z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+  label: shortText,
+  exclusive: z.boolean().optional(),
+  meaning: optionMeaningSchema,
+}).strict()
+
 export const interviewQuestionSchema = z.object({
-  id: contextDimensionSchema,
+  id: z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+  dimension: contextDimensionSchema,
+  phase: z.enum(['CORE', 'FOLLOW_UP']),
   prompt: z.string().trim().min(1).max(500),
   hint: z.string().trim().min(1).max(500),
-  options: z.array(shortText).min(3).max(4),
-}).strict()
+  selection: z.enum(['SINGLE', 'MULTIPLE']).optional(),
+  options: z.array(interviewOptionSchema).min(3).max(6),
+}).strict().superRefine((question, context) => {
+  const optionIds = question.options.map((option) => option.id)
+  if (new Set(optionIds).size !== optionIds.length) context.addIssue({ code: 'custom', path: ['options'], message: '選択肢IDは重複できません。' })
+  if (question.dimension === 'outputNeed' && question.options.some((option) => !option.meaning.outputNeed)) {
+    context.addIssue({ code: 'custom', path: ['options'], message: '成果物の必要性を聞く選択肢にはoutputNeedが必要です。' })
+  }
+})
 
 export const interviewPlanSchema = z.object({
-  questions: z.array(interviewQuestionSchema).min(4).max(8).superRefine((questions, context) => {
-    const ids = questions.map((question) => question.id)
-    if (new Set(ids).size !== ids.length) context.addIssue({ code: 'custom', message: '質問項目は重複できません。' })
-    for (const required of ['purpose', 'process', 'decision', 'outputNeed'] as const) {
-      if (!ids.includes(required)) context.addIssue({ code: 'custom', message: `${required}の質問が必要です。` })
+  phase: z.enum(['CORE', 'FOLLOW_UP']),
+  questions: z.array(interviewQuestionSchema).max(4),
+}).strict().superRefine((plan, context) => {
+  const ids = plan.questions.map((question) => question.id)
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: 'custom', path: ['questions'], message: '質問IDは重複できません。' })
+  if (plan.questions.some((question) => question.phase !== plan.phase)) context.addIssue({ code: 'custom', path: ['questions'], message: '質問のphaseをplanと一致させてください。' })
+  if (plan.phase === 'CORE') {
+    const dimensions = plan.questions.map((question) => question.dimension)
+    if (plan.questions.length !== 3 || !['purpose', 'decision', 'outputNeed'].every((item) => dimensions.includes(item as typeof dimensions[number]))) {
+      context.addIssue({ code: 'custom', path: ['questions'], message: 'Core Interviewはpurpose・decision・outputNeedの3問にしてください。' })
     }
-  }),
-}).strict()
+  }
+})
 
-export const interviewOptionsRequestSchema = z.object({
-  observation: workObservationSchema,
-}).strict()
+export const interviewAnswerSchema = z.object({
+  questionId: z.string().trim().min(1).max(100),
+  dimension: contextDimensionSchema,
+  question: z.string().trim().min(1).max(500),
+  answer: z.string().trim().min(1).max(2000),
+  source: z.enum(['OPTION', 'FREE_TEXT']),
+  optionId: z.string().trim().min(1).max(100).optional(),
+  optionIds: z.array(z.string().trim().min(1).max(100)).min(1).max(6).optional(),
+  meaning: optionMeaningSchema.optional(),
+}).strict().superRefine((answer, context) => {
+  if (answer.source === 'OPTION' && ((!answer.optionId && !answer.optionIds) || !answer.meaning)) {
+    context.addIssue({ code: 'custom', message: '選択回答にはoptionIdまたはoptionIdsとmeaningが必要です。' })
+  }
+  if (answer.source === 'FREE_TEXT' && (answer.optionId || answer.optionIds || answer.meaning)) {
+    context.addIssue({ code: 'custom', message: '自由回答に選択肢の意味を付与しないでください。' })
+  }
+})
 
-export const contextStateSchema = z.enum(['CONFIRMED', 'PARTIAL', 'UNKNOWN'])
+export const interviewOptionsRequestSchema = z.object({ observation: workObservationSchema }).strict()
 
 export const contextStatusSchema = z.object({
   purpose: contextStateSchema,
   stakeholders: contextStateSchema,
+  roles: contextStateSchema.default('UNKNOWN'),
   process: contextStateSchema,
   decisions: contextStateSchema,
   exceptions: contextStateSchema,
@@ -66,15 +123,33 @@ export const contextStatusSchema = z.object({
   output: contextStateSchema,
 }).strict()
 
-export const businessTaskSchema = z.object({
+export const businessRoleDetailSchema = z.object({
   name: shortText,
-  observed: workObservationSchema,
+  present: z.boolean(),
+  scope: roleScopeSchema,
+  scopeDetail: shortText.optional(),
+  sourceQuestionId: z.string().trim().min(1).max(100),
+  sourceOptionIds: z.array(z.string().trim().min(1).max(100)).max(6).default([]),
+}).strict()
+
+export const deliveryModelSchema = z.object({
+  sharingMode: z.enum(['ASYNC_POSSIBLE', 'SYNC_REQUIRED', 'UNKNOWN']),
+  synchronousRole: z.enum(['NONE', 'SEPARATE_REQUIRED', 'CURRENT_FORMAT_REQUIRED', 'UNKNOWN']),
+  currentFormat: z.enum(['NOT_REQUIRED', 'REQUIRED', 'UNKNOWN']),
+  sourceQuestionId: z.string().trim().min(1).max(100).optional(),
+  sourceOptionIds: z.array(z.string().trim().min(1).max(100)).max(6).default([]),
+}).strict()
+
+export const businessTaskDraftSchema = z.object({
+  name: shortText,
   purpose: purposeText,
   frequency: shortText,
   duration: shortText,
   trigger: shortText,
   stakeholders: textList,
   consumer: shortText,
+  businessRoles: textList.default([]),
+  businessRoleDetails: z.array(businessRoleDetailSchema).max(12).default([]),
   tools: textList,
   inputs: textList,
   output: shortText,
@@ -86,27 +161,46 @@ export const businessTaskSchema = z.object({
   risks: textList,
   outputRequirement: z.enum(['NOT_REQUIRED', 'ON_DEMAND', 'REQUIRED', 'UNKNOWN']),
   outputRequirementReason: sentence,
+  deliveryModel: deliveryModelSchema.default({
+    sharingMode: 'UNKNOWN',
+    synchronousRole: 'UNKNOWN',
+    currentFormat: 'UNKNOWN',
+    sourceOptionIds: [],
+  }),
   contextStatus: contextStatusSchema,
 }).strict()
 
+export const businessTaskSchema = businessTaskDraftSchema.extend({
+  observed: workObservationSchema,
+  answerEvidence: z.array(interviewAnswerSchema).max(20).default([]),
+}).strict().superRefine((task, context) => {
+  const latestOutputMeaning = task.answerEvidence.map((answer) => answer.meaning?.outputNeed).filter(Boolean).at(-1)
+  if (latestOutputMeaning === 'SYNC_DISCUSSION_STILL_REQUIRED' && (
+    task.deliveryModel.sharingMode !== 'ASYNC_POSSIBLE'
+    || task.deliveryModel.synchronousRole !== 'SEPARATE_REQUIRED'
+    || task.deliveryModel.currentFormat === 'REQUIRED'
+  )) {
+    context.addIssue({ code: 'custom', path: ['deliveryModel'], message: '予定共有の非同期化と、別途必要な相談時間を分けて保持してください。' })
+  }
+  if (latestOutputMeaning === 'CURRENT_FORMAT_REQUIRED' && task.outputRequirement !== 'REQUIRED') {
+    context.addIssue({ code: 'custom', path: ['outputRequirement'], message: '現在形式が必要という回答を維持してください。' })
+  }
+  if (latestOutputMeaning === 'ASYNC_OK' && task.outputRequirement !== 'NOT_REQUIRED') {
+    context.addIssue({ code: 'custom', path: ['outputRequirement'], message: '非同期共有でよいという回答を維持してください。' })
+  }
+  for (const detail of task.businessRoleDetails) {
+    if (detail.scope === 'PARTIAL' && !detail.scopeDetail) {
+      context.addIssue({ code: 'custom', path: ['businessRoleDetails'], message: '一部確認の役割には、対象となる範囲を保持してください。' })
+    }
+  }
+})
+
 export const ratingSchema = z.enum(['HIGH', 'MEDIUM', 'LOW'])
 export const workflowKindSchema = z.enum(['human', 'system', 'ai', 'decision', 'output'])
-
-export const workflowStepSchema = z.object({
-  label: shortText,
-  detail: shortText,
-  kind: workflowKindSchema,
-}).strict()
-
+export const workflowStepSchema = z.object({ label: shortText, detail: shortText, kind: workflowKindSchema }).strict()
 export const redesignStrategySchema = z.enum(['ELIMINATE', 'ON_DEMAND', 'AUTOMATE', 'KEEP'])
 export const designReadinessSchema = z.enum(['HYPOTHESIS_READY', 'NEEDS_CONTEXT'])
-export const validationTypeSchema = z.enum([
-  'PILOT',
-  'TECHNICAL_FEASIBILITY',
-  'OFFLINE_EVALUATION',
-  'REQUIREMENT_VALIDATION',
-  'STAKEHOLDER_REVIEW',
-])
+export const validationTypeSchema = z.enum(['PILOT', 'TECHNICAL_FEASIBILITY', 'OFFLINE_EVALUATION', 'REQUIREMENT_VALIDATION', 'STAKEHOLDER_REVIEW'])
 
 export const validationItemSchema = z.object({
   type: validationTypeSchema,
@@ -115,34 +209,27 @@ export const validationItemSchema = z.object({
   checks: z.array(shortText).min(1).max(8),
 }).strict()
 
+export const criticalUnknownSchema = z.object({
+  id: z.string().trim().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/),
+  dimension: contextDimensionSchema,
+  question: sentence,
+  reason: sentence,
+}).strict()
+
 export const designOutputSchema = z.object({
   analysis: z.object({
     readiness: designReadinessSchema,
     conclusion: sentence,
-    purposeCheck: z.object({
-      outcome: sentence,
-      currentMeans: sentence,
-      outputDecision: sentence,
-    }).strict(),
-    problems: z.array(z.object({
-      value: shortText,
-      label: shortText,
-      detail: shortText,
-    }).strict()).min(1).max(5),
-    ratings: z.object({
-      opportunity: ratingSchema,
-      implementation: ratingSchema,
-      aiFit: ratingSchema,
-    }).strict(),
+    purposeCheck: z.object({ outcome: sentence, currentMeans: sentence, outputDecision: sentence }).strict(),
+    problems: z.array(z.object({ value: shortText, label: shortText, detail: shortText }).strict()).min(1).max(5),
+    ratings: z.object({ opportunity: ratingSchema, implementation: ratingSchema, aiFit: ratingSchema }).strict(),
     ratingReasons: z.array(sentence).min(1).max(5),
-    facts: z.array(sentence).min(2).max(10),
+    facts: z.array(sentence).min(2).max(12),
     assumptions: z.array(sentence).max(10),
     unknowns: z.array(sentence).max(10),
+    criticalUnknowns: z.array(criticalUnknownSchema).max(6).default([]),
     nextQuestions: z.array(sentence).max(8),
-    conventional: z.object({
-      summary: sentence,
-      steps: z.array(shortText).min(1).max(12),
-    }).strict(),
+    conventional: z.object({ summary: sentence, steps: z.array(shortText).min(1).max(12) }).strict(),
   }).strict(),
   redesign: z.object({
     strategy: redesignStrategySchema,
@@ -150,11 +237,7 @@ export const designOutputSchema = z.object({
     headline: sentence,
     insight: sentence,
     workflow: z.array(workflowStepSchema).min(3).max(7),
-    roles: z.object({
-      system: textList,
-      ai: textList,
-      human: z.array(shortText).min(1).max(12),
-    }).strict(),
+    roles: z.object({ system: textList, ai: textList, human: z.array(shortText).min(1).max(12) }).strict(),
     metrics: z.object({
       scheduledOutputBefore: shortText,
       scheduledOutputAfter: shortText,
@@ -173,10 +256,7 @@ export const designOutputSchema = z.object({
       assumption: sentence,
     }).strict(),
   }).strict(),
-  validationPlan: z.object({
-    summary: sentence,
-    items: z.array(validationItemSchema).min(1).max(5),
-  }).strict(),
+  validationPlan: z.object({ summary: sentence, items: z.array(validationItemSchema).min(1).max(5) }).strict(),
 }).strict()
 
 export function designOutputSchemaFor(task: BusinessTask) {
@@ -184,7 +264,6 @@ export function designOutputSchemaFor(task: BusinessTask) {
     if (design.redesign.impact.exceptionMinutesMin > design.redesign.impact.exceptionMinutesMax) {
       context.addIssue({ code: 'custom', path: ['redesign', 'impact', 'exceptionMinutesMin'], message: '例外時の最小時間は最大時間以下にしてください。' })
     }
-
     const criticalContext = [task.contextStatus.constraints, task.contextStatus.dependencies, task.contextStatus.risks]
     if (criticalContext.includes('UNKNOWN') && design.analysis.readiness !== 'NEEDS_CONTEXT') {
       context.addIssue({ code: 'custom', path: ['analysis', 'readiness'], message: '重大な制約・依存関係・リスクが未確認の場合は、追加確認が必要です。' })
@@ -192,34 +271,36 @@ export function designOutputSchemaFor(task: BusinessTask) {
     if (design.analysis.readiness === 'NEEDS_CONTEXT' && design.redesign.strategy === 'ELIMINATE') {
       context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '追加確認が必要な段階では業務廃止を断定できません。' })
     }
+    if (task.outputRequirement === 'REQUIRED' && design.redesign.strategy === 'ELIMINATE') {
+      context.addIssue({ code: 'custom', path: ['redesign', 'strategy'], message: '必要と確認された同期機能・成果物を廃止できません。' })
+    }
   })
 }
 
-export const businessDesignSchema = designOutputSchema.extend({
-  businessTask: businessTaskSchema,
-}).strict()
+export const businessDesignSchema = designOutputSchema.extend({ businessTask: businessTaskSchema }).strict()
 
 export const interviewRequestSchema = z.object({
   observation: workObservationSchema,
-  answers: z.array(z.object({
-    dimension: contextDimensionSchema,
-    question: z.string().trim().min(1).max(500),
-    answer: z.string().trim().min(1).max(2000),
-  }).strict()).min(4).max(8),
+  answers: z.array(interviewAnswerSchema).min(3).max(20),
 }).strict()
 
-export const designRequestSchema = z.object({
-  businessTask: businessTaskSchema,
-}).strict()
+export const followUpRequestSchema = z.object({ businessTask: businessTaskSchema }).strict()
+export const designRequestSchema = z.object({ businessTask: businessTaskSchema }).strict()
 
+export type BusinessTaskDraft = z.infer<typeof businessTaskDraftSchema>
 export type BusinessTask = z.infer<typeof businessTaskSchema>
 export type BusinessDesign = z.infer<typeof businessDesignSchema>
 export type DesignOutput = z.infer<typeof designOutputSchema>
 export type InterviewPlan = z.infer<typeof interviewPlanSchema>
 export type InterviewQuestion = z.infer<typeof interviewQuestionSchema>
-export type InterviewAnswer = z.infer<typeof interviewRequestSchema.shape.answers.element>
+export type InterviewOption = z.infer<typeof interviewOptionSchema>
+export type InterviewAnswer = z.infer<typeof interviewAnswerSchema>
+export type InterviewRequest = z.infer<typeof interviewRequestSchema>
+export type OptionMeaning = z.infer<typeof optionMeaningSchema>
+export type RoleScope = z.infer<typeof roleScopeSchema>
 export type WorkObservation = z.infer<typeof workObservationSchema>
 export type ContextState = z.infer<typeof contextStateSchema>
+export type ContextDimension = z.infer<typeof contextDimensionSchema>
 export type Rating = z.infer<typeof ratingSchema>
 export type WorkflowKind = z.infer<typeof workflowKindSchema>
 export type WorkflowStepInput = z.infer<typeof workflowStepSchema>

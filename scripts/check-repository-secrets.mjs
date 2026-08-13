@@ -19,12 +19,12 @@ async function readIfPresent(relativePath) {
   }
 }
 
-const trackedFiles = execFileSync('git', ['ls-files', '-z'], {
+const repositoryFiles = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
   cwd: projectRoot,
   encoding: 'utf8',
 }).split('\0').filter(Boolean)
 
-const forbiddenFiles = trackedFiles.filter((file) => forbiddenPath.test(file.replaceAll('\\', '/')))
+const forbiddenFiles = repositoryFiles.filter((file) => forbiddenPath.test(file.replaceAll('\\', '/')))
 if (forbiddenFiles.length) {
   throw new Error(`Secret check failed: forbidden local file staged (${forbiddenFiles.join(', ')})`)
 }
@@ -56,7 +56,7 @@ const knownSecrets = [deepSeekKey.trim(), tokenKey.trim(), ...googleSecrets, ...
   .filter((value) => typeof value === 'string' && value.length >= 12)
 
 const leakedFiles = []
-for (const file of trackedFiles) {
+for (const file of repositoryFiles) {
   const content = await readFile(path.join(projectRoot, file), 'utf8')
   if (knownSecrets.some((secret) => content.includes(secret)) || tokenPatterns.some((pattern) => pattern.test(content))) {
     leakedFiles.push(file)
@@ -67,4 +67,4 @@ if (leakedFiles.length) {
   throw new Error(`Secret check failed: possible credential found in ${leakedFiles.join(', ')}`)
 }
 
-console.log(`Repository secret check passed for ${trackedFiles.length} tracked file(s).`)
+console.log(`Repository secret check passed for ${repositoryFiles.length} tracked or untracked candidate file(s).`)
