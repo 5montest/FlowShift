@@ -68,13 +68,11 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, busy,
         <p className="opening-observation"><LoaderCircle size={18} className="animate-spin" /> カレンダーを読み込んでいます…</p>
       </> : focus ? <>
         <p className="opening-observation">
-          過去4週間のカレンダーを見ると、<br />
-          {mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}<br /></span>)}
-          行っています。
+          過去4週間のカレンダーを見ると、{mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}</span>)}行っています。
         </p>
         {draftIds.has(focus.id)
-          ? <p className="opening-ask">「{focus.title}」の続きから再開できます。<br />前回の回答はそのまま残っています。</p>
-          : <p className="opening-ask">まず「{focus.title}」について、実際には何をしているか教えてください。<br />3つの質問に答えると、この業務の整理ができます。</p>}
+          ? <p className="opening-ask">「{focus.title}」の続きから再開できます。前回の回答はそのまま残っています。</p>
+          : <p className="opening-ask">まず「{focus.title}」について、実際には何をしているか教えてください。3つの質問に答えると、この業務の整理ができます。</p>}
         <div className="opening-actions">
           <button type="button" className="primary-button" onClick={() => onStartSession(focus)}>{draftIds.has(focus.id) ? `「${focus.title}」の続きから答える` : `${focus.title}について答える`}<ArrowRight size={20} /></button>
           <details className="work-picker"><summary>別の業務から始める</summary>

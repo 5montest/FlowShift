@@ -56,8 +56,6 @@ export default function HypothesisScreen({ task, design, designError, savedProje
           <section><h3>成り立つ前提</h3>{design.analysis.assumptions.length ? <ul>{design.analysis.assumptions.map((item) => <li key={item}>{item}</li>)}</ul> : <p>追加の前提はありません。</p>}</section>
           <section><h3>まだ分からないこと</h3>{design.analysis.unknowns.length ? <ul>{design.analysis.unknowns.map((item) => <li key={item}>{item}</li>)}</ul> : <p>重大な未確認の項目はありません。</p>}</section>
         </div>
-        <div className="result-actions">{savedProject ? <button type="button" className="primary-button" onClick={onOpenSaved}>保存した業務を開く<ArrowRight size={20} /></button> : <button type="button" className="primary-button" disabled={status === 'loading'} onClick={() => void run(onSave)}>{status === 'loading' ? <><LoaderCircle className="animate-spin" />保存中</> : '仮説を保存して検証を始める'}</button>}<span>保存すると、ワークスペースの「進行中の仮説」から検証を続けられます。</span></div>
-        {status === 'error' && <p className="calendar-error" role="alert">{errorMessage}</p>}
       </>}
     </section>
 
@@ -70,5 +68,18 @@ export default function HypothesisScreen({ task, design, designError, savedProje
         <section className="validation-section"><header><p>{design.validationPlan.summary}</p></header>{design.validationPlan.items.map((item) => <article key={`${item.type}-${item.title}`}><span>{validationLabels[item.type]}</span><h3>{item.title}</h3><p>{item.description}</p><ul>{item.checks.map((check) => <li key={check}>{check}</li>)}</ul></article>)}</section>
       </details>
     </>}
+    <div className="action-bar">
+      <div className="action-bar-hint">
+        <span>保存すると、ワークスペースの「進行中の仮説」から検証を続けられます。</span>
+        {status === 'error' && <span className="calendar-error" role="alert">{errorMessage}</span>}
+      </div>
+      {savedProject
+        ? <button type="button" className="primary-button" onClick={onOpenSaved}>保存した業務を開く<ArrowRight size={20} /></button>
+        : designError && !design
+          ? <button type="button" className="primary-button" onClick={onRetry}>もう一度作る</button>
+          : <button type="button" className="primary-button" disabled={!design || status === 'loading'} onClick={() => void run(onSave)}>
+            {!design ? <><LoaderCircle className="animate-spin" />仮説を準備中</> : status === 'loading' ? <><LoaderCircle className="animate-spin" />保存中</> : '仮説を保存して検証を始める'}
+          </button>}
+    </div>
   </main>
 }
