@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fallbackCorePlan } from '../shared/context-questions'
 import { createDeterministicTask } from '../shared/interview'
 import { projectContext, projectName } from '../shared/project-schema'
-import { applyCategories, groupCalendarEvents, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
+import { applyCategories, groupCalendarEvents, mergeWorkGroups, normalizeWorkTitle, rankDiscoveryCandidates, toObservation, type WorkCategory } from '../shared/work-group'
 import type { UserProfile } from '../shared/profile-schema'
 import {
   ApiError,
@@ -28,6 +28,8 @@ import AppHeader from './components/AppHeader'
 import { mergeCategoryCache, readCategoryCache } from './lib/categories'
 import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
 import { listMutedWork, markProfilePrompted, muteWork, profilePrompted, unmuteWork } from './lib/preferences'
+import { addManualWork, listManualWork, removeManualWork } from './lib/manual-work'
+import AddWorkDialog from './components/AddWorkDialog'
 import ProfileDialog from './components/ProfileDialog'
 import ConnectScreen from './screens/ConnectScreen'
 import WorkspaceScreen from './screens/WorkspaceScreen'
@@ -99,6 +101,7 @@ export default function App() {
   const [mutedWork, setMutedWork] = useState<Set<string>>(() => listMutedWork())
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [showProfileDialog, setShowProfileDialog] = useState(false)
+  const [showAddWork, setShowAddWork] = useState(false)
 
   // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
   const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
@@ -199,7 +202,7 @@ export default function App() {
         getProfile().catch(() => null),
       ])
       const cachedCategories = readCategoryCache()
-      const nextGroups = applyCategories(groupCalendarEvents(calendarResult.events), cachedCategories)
+      const nextGroups = applyCategories(mergeWorkGroups(groupCalendarEvents(calendarResult.events), listManualWork()), cachedCategories)
       planCache.current.clear()
       setGroups(nextGroups)
       setProfile(userProfile)
@@ -470,6 +473,25 @@ export default function App() {
     setShowProfileDialog(false)
   }
 
+  function handleAddWork(group: WorkGroup) {
+    // 同じ名前の業務がすでにあるなら二重計上させない（カレンダー実測優先）
+    if (groups.some((item) => normalizeWorkTitle(item.title) === normalizeWorkTitle(group.title))) {
+      setCalendarError(`「${group.title}」は同じ名前の業務がすでに一覧にあります。`)
+      return
+    }
+    addManualWork(group)
+    setCalendarError('')
+    setGroups((current) => mergeWorkGroups(current, [group]))
+    refineCategoriesInBackground([group], readCategoryCache(), profile)
+    showNotice(`「${group.title}」を追加しました。内訳と業務の一覧から確認できます。`)
+  }
+
+  function handleRemoveManualWork(id: string) {
+    removeManualWork(id)
+    planCache.current.delete(id)
+    setGroups((current) => current.filter((group) => group.id !== id))
+  }
+
   function handleMuteWork(title: string) {
     setMutedWork(muteWork(title))
   }
@@ -521,11 +543,12 @@ export default function App() {
   return <div className="app-shell">
     <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} email={calendar.connected ? calendar.email : undefined} picture={calendar.connected ? calendar.picture : undefined} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} onOpenProfile={() => setShowProfileDialog(true)} onDisconnect={() => void disconnect()} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
-    {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} />}
+    {screen === 'workspace' && <WorkspaceScreen groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onAddWork={() => setShowAddWork(true)} onRemoveManualWork={handleRemoveManualWork} />}
     {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}
     {showProfileDialog && calendar.connected && <ProfileDialog profile={profile} onSave={handleSaveProfile} onSkip={handleSkipProfile} />}
+    {showAddWork && <AddWorkDialog onAdd={handleAddWork} onClose={() => setShowAddWork(false)} />}
     {showRestartConfirm && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-heading"><h2 id="restart-heading">最初からやり直しますか？</h2><p>この業務の下書きを削除して、最初の質問からやり直します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setShowRestartConfirm(false)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { setShowRestartConfirm(false); restartSession() }}>やり直す</button></div></section></div>}
   </div>
 }

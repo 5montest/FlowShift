@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, Bell, BellOff, CalendarSearch, ChartColumnBig, Check, Code, Coffee, Database, FileText, FlaskConical, Headset, LoaderCircle, PencilLine, RefreshCw, Shapes, TrendingDown, Users } from 'lucide-react'
+import { ArrowRight, Bell, BellOff, CalendarSearch, ChartColumnBig, Check, Code, Coffee, Database, FileText, FlaskConical, Headset, LoaderCircle, PencilLine, Plus, RefreshCw, Shapes, TrendingDown, Users } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
+import { isManualWork } from '../lib/manual-work'
 import { projectContext, projectName } from '../../shared/project-schema'
 import { computeReduction, normalizeWorkTitle, rankDiscoveryCandidates, summarizeWorkGroups } from '../../shared/work-group'
 import { draftProgressLabel } from '../lib/drafts'
@@ -17,7 +18,7 @@ const categoryIcons: Record<string, typeof Users> = {
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 進行中の仮説・採用済み仮説の削減）を置く。
-export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork }: {
+export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork, onAddWork, onRemoveManualWork }: {
   groups: WorkGroup[]
   projects: ImprovementProject[]
   drafts: SessionDraft[]
@@ -35,10 +36,13 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
   onDiscardDraft: (groupId: string) => void
   onMuteWork: (title: string) => void
   onUnmuteWork: (title: string) => void
+  onAddWork: () => void
+  onRemoveManualWork: (id: string) => void
 }) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [detailGroup, setDetailGroup] = useState<WorkGroup | null>(null)
   const [confirmDiscard, setConfirmDiscard] = useState<SessionDraft | null>(null)
+  const [confirmRemoveWork, setConfirmRemoveWork] = useState<WorkGroup | null>(null)
   const draftIds = useMemo(() => new Set(drafts.map((draft) => draft.group.id)), [drafts])
   const summary = useMemo(() => summarizeWorkGroups(groups), [groups])
   // 却下した業務はまた声かけの候補に戻す（進行中・採用・保留のみ除外）
@@ -64,7 +68,7 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
   const timeFormat = new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
   function pickerRow(group: WorkGroup) {
-    return <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}{mutedWork.has(normalizeWorkTitle(group.title)) && '・声かけ対象外'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>
+    return <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{isManualWork(group) && '・手動登録'}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}{mutedWork.has(normalizeWorkTitle(group.title)) && '・声かけ対象外'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>
   }
 
   return <main className="dashboard-main">
@@ -100,7 +104,10 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
         <div className="opening-actions">
           {groups.length ? <details className="work-picker" open><summary>業務を選ぶ</summary>
             <div className="work-picker-list">{groups.map(pickerRow)}</div>
-          </details> : <p className="opening-empty">カレンダーに時間のある予定（終日以外）が登録されると、ここから始められます。</p>}
+          </details> : <>
+            <p className="opening-empty">カレンダーに時間のある予定（終日以外）が登録されると、ここから始められます。</p>
+            <button type="button" className="secondary-button" onClick={onAddWork}><Plus size={18} />カレンダーに載らない業務を追加する</button>
+          </>}
         </div>
       </>}
     </section>
@@ -116,10 +123,10 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
       </div>)}</div>
     </section>}
     <div className="dashboard-grid">
-      <section className="work-breakdown"><header className="breakdown-header"><div><h2><ChartColumnBig size={18} className="heading-icon" />業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}><RefreshCw size={16} className={busy ? 'animate-spin' : undefined} />{busy ? '更新中' : 'カレンダーを更新'}</button></header>
+      <section className="work-breakdown"><header className="breakdown-header"><div><h2><ChartColumnBig size={18} className="heading-icon" />業務時間の内訳</h2><p>{calendarRange ? `${rangeFormat.format(new Date(calendarRange.timeMin))}〜${rangeFormat.format(new Date(calendarRange.timeMax))}の合計${formatMinutes(summary.calendarMinutes)}` : `過去4週間の合計${formatMinutes(summary.calendarMinutes)}`}{groups.some(isManualWork) ? '（手動登録の業務を含む）' : ''}{fetchedAt ? `（${timeFormat.format(fetchedAt)}時点）` : ''}。棒を選ぶと業務の一覧と詳細を確認できます。</p></div><div className="breakdown-actions"><button type="button" className="secondary-button" onClick={onAddWork}><Plus size={16} />業務を追加</button><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}><RefreshCw size={16} className={busy ? 'animate-spin' : undefined} />{busy ? '更新中' : 'カレンダーを更新'}</button></div></header>
         {categories.length ? <div className="category-bars">{categories.map(([category, minutes]) => <div key={category} className="category-row">
           <button type="button" className="category-bar" aria-pressed={selectedCategory === category} aria-expanded={selectedCategory === category} onClick={() => setSelectedCategory((current) => current === category ? null : category)}><span>{(() => { const Icon = categoryIcons[category]; return Icon ? <Icon size={16} /> : null })()}{category}</span><i><b style={{ width: `${Math.max(6, Math.round(minutes / maxCategoryMinutes * 100))}%` }} /></i><strong>{formatMinutes(minutes)}</strong></button>
-          {selectedCategory === category && <div className="category-drilldown">{categoryGroups.map((group) => <button key={group.id} type="button" onClick={() => setDetailGroup(group)}><span><strong>{group.title}</strong><small>{group.occurrences}回 / 4週間{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}</small></span><span>{formatMinutes(group.totalMinutes)}</span><ArrowRight size={18} /></button>)}</div>}
+          {selectedCategory === category && <div className="category-drilldown">{categoryGroups.map((group) => <button key={group.id} type="button" onClick={() => setDetailGroup(group)}><span><strong>{group.title}</strong><small>{group.occurrences}回 / 4週間{isManualWork(group) && '・手動登録'}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}</small></span><span>{formatMinutes(group.totalMinutes)}</span><ArrowRight size={18} /></button>)}</div>}
         </div>)}</div> : <p>カレンダーの業務を取得すると内訳が表示されます。</p>}
       </section>
       <section className="active-projects"><header><h2><FlaskConical size={18} className="heading-icon" />進行中の仮説</h2><p>未確認の項目と、次に進める検証です。</p></header>
@@ -154,19 +161,21 @@ export default function WorkspaceScreen({ groups, projects, drafts, mutedWork, b
         <div><dt>回数</dt><dd>{detailGroup.occurrences}回 / 4週間</dd></div>
         <div><dt>合計時間</dt><dd>{formatMinutes(detailGroup.totalMinutes)}</dd></div>
         <div><dt>1回あたり</dt><dd>平均{formatMinutes(detailGroup.averageMinutes)}</dd></div>
-        <div><dt>登録</dt><dd>{detailGroup.recurring ? '同一の定例予定' : '同じタイトルの予定'}</dd></div>
+        <div><dt>登録</dt><dd>{isManualWork(detailGroup) ? '手動で登録した業務（自己申告）' : detailGroup.recurring ? '同一の定例予定' : '同じタイトルの予定'}</dd></div>
         {detailDraft && <div><dt>下書き</dt><dd>{draftProgressLabel(detailDraft)}</dd></div>}
         {detailProject && <div><dt>仮説</dt><dd>{projectStatusLabels[detailProject.status]}</dd></div>}
       </dl>
       {mutedWork.has(normalizeWorkTitle(detailGroup.title))
         ? <button type="button" className="text-button mute-toggle" onClick={() => onUnmuteWork(detailGroup.title)}><Bell size={15} />声かけの対象に戻す</button>
         : <button type="button" className="text-button mute-toggle" onClick={() => onMuteWork(detailGroup.title)}><BellOff size={15} />この業務は声かけの対象外にする（休憩・私用など）</button>}
+      {isManualWork(detailGroup) && <button type="button" className="text-button mute-toggle" onClick={() => setConfirmRemoveWork(detailGroup)}>この登録を削除する</button>}
       <div className="group-detail-actions">
         <button type="button" className="secondary-button" onClick={() => setDetailGroup(null)}>閉じる</button>
         {detailProject && <button type="button" className="secondary-button" onClick={() => { setDetailGroup(null); onOpenProject(detailProject) }}>仮説を開く</button>}
         <button type="button" className="primary-button" onClick={() => { setDetailGroup(null); onStartSession(detailGroup) }}>{detailDraft ? '続きから答える' : 'この業務について答える'}<ArrowRight size={18} /></button>
       </div>
     </section></div>}
+    {confirmRemoveWork && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-work-heading"><h2 id="remove-work-heading">手動登録を削除しますか？</h2><p>「{confirmRemoveWork.title}」を一覧と内訳から削除します。保存済みの仮説と下書きは残ります。</p><div><button type="button" className="secondary-button" onClick={() => setConfirmRemoveWork(null)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { onRemoveManualWork(confirmRemoveWork.id); setConfirmRemoveWork(null); setDetailGroup(null) }}>削除する</button></div></section></div>}
     {confirmDiscard && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-heading"><h2 id="discard-heading">下書きを破棄しますか？</h2><p>「{confirmDiscard.group.title}」の回答と作成済みの仮説を、このブラウザから削除します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setConfirmDiscard(null)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { onDiscardDraft(confirmDiscard.group.id); setConfirmDiscard(null) }}>破棄する</button></div></section></div>}
   </main>
 }

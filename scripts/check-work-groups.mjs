@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { applyCategories, categorizeWork, groupCalendarEvents, isLikelyPersonal, rankDiscoveryCandidates, summarizeWorkGroups, workClassificationRequestSchema, workClassificationResponseSchema } from '../shared/work-group.ts'
+import { applyCategories, categorizeWork, groupCalendarEvents, isLikelyPersonal, mergeWorkGroups, rankDiscoveryCandidates, summarizeWorkGroups, workClassificationRequestSchema, workClassificationResponseSchema, workGroupSchema } from '../shared/work-group.ts'
 
 const events = [
   { id: '1', title: '朝会', start: '2026-07-13T00:00:00.000Z', end: '2026-07-13T00:15:00.000Z', durationMinutes: 15, recurringEventId: 'daily', allDay: false },
@@ -52,6 +52,27 @@ assert.ok(workClassificationRequestSchema.safeParse({ titles: ['朝会'] }).succ
 assert.ok(!workClassificationRequestSchema.safeParse({ titles: [] }).success)
 assert.ok(workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '会議' }] }).success)
 assert.ok(!workClassificationResponseSchema.safeParse({ categories: [{ title: '朝会', category: '謎分類' }] }).success)
+
+// 手動登録業務のマージ：タイトル衝突はカレンダー実測が勝ち、非衝突は合計時間順に並ぶ
+const manualWork = {
+  id: 'manual:00000000-0000-4000-8000-000000000001',
+  title: '問い合わせメール対応',
+  occurrences: 10,
+  totalMinutes: 300,
+  averageMinutes: 30,
+  firstOccurredAt: '2026-07-16T00:00:00.000Z',
+  lastOccurredAt: '2026-08-13T00:00:00.000Z',
+  recurring: true,
+  category: '顧客対応',
+}
+const manualDuplicate = { ...manualWork, id: 'manual:00000000-0000-4000-8000-000000000002', title: ' 売上レポート作成 ', totalMinutes: 999 }
+assert.ok(workGroupSchema.safeParse(manualWork).success, 'manual work must satisfy workGroupSchema')
+const mergedGroups = mergeWorkGroups(rankGroups, [manualWork, manualDuplicate])
+assert.equal(mergedGroups.length, rankGroups.length + 1, 'duplicate titles must not be double counted')
+assert.ok(!mergedGroups.some((group) => group.totalMinutes === 999), 'calendar observation must win over manual input')
+assert.ok(mergedGroups.some((group) => group.id === manualWork.id))
+assert.deepEqual(mergedGroups.map((group) => group.totalMinutes), [...mergedGroups.map((group) => group.totalMinutes)].sort((a, b) => b - a), 'merged list keeps totalMinutes order')
+assert.equal(rankDiscoveryCandidates(mergeWorkGroups([], [manualWork]))[0]?.id, manualWork.id, 'recurring manual work qualifies for discovery')
 
 // プロフィールのプロンプト補間行
 const { profileSummaryLine } = await import('../shared/profile-schema.ts')

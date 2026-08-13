@@ -105,6 +105,14 @@ export function groupCalendarEvents(events: CalendarEvent[]): WorkGroup[] {
   }).sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
 }
 
+// カレンダー由来と手動登録のWorkGroupを1つの一覧に合流させる。
+// 正規化タイトルが衝突したらカレンダー側が勝つ（実測優先・二重計上防止）。
+export function mergeWorkGroups(calendarGroups: WorkGroup[], manualGroups: WorkGroup[]): WorkGroup[] {
+  const calendarTitles = new Set(calendarGroups.map((group) => normalizeWorkTitle(group.title)))
+  const merged = [...calendarGroups, ...manualGroups.filter((group) => !calendarTitles.has(normalizeWorkTitle(group.title)))]
+  return merged.sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
+}
+
 export function isDiscoveryCandidate(group: WorkGroup): boolean {
   return group.occurrences >= 2 || group.totalMinutes >= 60 || ['資料作成', 'データ処理'].includes(group.category)
 }
