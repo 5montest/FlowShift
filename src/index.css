@@ -1,13 +1,4 @@
-@import "tailwindcss";
 @import "./tokens.css";
-
-@theme {
-  --color-canvas: var(--fs-color-canvas);
-  --color-ink: var(--fs-color-text);
-  --color-muted: var(--fs-color-text-muted);
-  --color-line: var(--fs-color-border);
-  --color-teal: var(--fs-color-brand);
-}
 
 :root {
   font-family: var(--fs-font-family);
@@ -19,6 +10,8 @@
 }
 
 * { box-sizing: border-box; }
+.animate-spin { animation: fs-spin var(--fs-motion-spin-duration) linear infinite; }
+@keyframes fs-spin { to { transform: rotate(360deg); } }
 html { scroll-behavior: smooth; }
 body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--fs-color-canvas); }
 button, textarea, input, select { font: inherit; }

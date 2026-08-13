@@ -57,7 +57,7 @@ const knownSecrets = [deepSeekKey.trim(), tokenKey.trim(), ...googleSecrets, ...
 
 const leakedFiles = []
 for (const file of repositoryFiles) {
-  const content = await readFile(path.join(projectRoot, file), 'utf8')
+  const content = await readIfPresent(file)
   if (knownSecrets.some((secret) => content.includes(secret)) || tokenPatterns.some((pattern) => pattern.test(content))) {
     leakedFiles.push(file)
   }

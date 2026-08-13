@@ -87,6 +87,7 @@
   --fs-radius-md: 4px;
   --fs-shadow-overlay: 0 12px 30px rgba(18, 34, 56, .14);
   --fs-shadow-dialog: 0 24px 70px rgba(18, 34, 56, .24);
+  --fs-motion-spin-duration: 800ms;
   --fs-content-wide: 1320px;
   --fs-content-workspace: 1240px;
 }

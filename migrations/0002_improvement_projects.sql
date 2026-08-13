@@ -6,7 +6,6 @@ CREATE TABLE improvement_projects (
   project_json TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  review_at INTEGER,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
