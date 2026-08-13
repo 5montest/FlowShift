@@ -136,7 +136,7 @@ contextStatusは、各情報が回答で確認できたかを項目ごとに示�
   "stakeholders":["string"],"consumer":"string","businessRoles":["string"],"tools":["string"],"inputs":["string"],"output":"string",
   "steps":["string"],"decisionPoints":["string"],"exceptions":["string"],"constraints":["string"],"dependencies":["string"],"risks":["string"],
   "outputRequirement":"NOT_REQUIRED | ON_DEMAND | REQUIRED | UNKNOWN","outputRequirementReason":"string",
-  "contextStatus":{"purpose":"CONFIRMED | PARTIAL | UNKNOWN","stakeholders":"CONFIRMED | PARTIAL | UNKNOWN","roles":"CONFIRMED | PARTIAL | UNKNOWN","process":"CONFIRMED | PARTIAL | UNKNOWN","decisions":"CONFIRMED | PARTIAL | UNKNOWN","exceptions":"CONFIRMED | PARTIAL | UNKNOWN","constraints":"CONFIRMED | PARTIAL | UNKNOWN","dependencies":"CONFIRMED | PARTIAL | UNKNOWN","risks":"CONFIRMED | PARTIAL | UNKNOWN","output":"CONFIRMED | PARTIAL | UNKNOWN"}
+  "contextStatus":{"purpose":"CONFIRMED | PARTIAL | UNKNOWN","stakeholders":"CONFIRMED | PARTIAL | UNKNOWN","roles":"CONFIRMED | PARTIAL | UNKNOWN","process":"CONFIRMED | PARTIAL | UNKNOWN","decision":"CONFIRMED | PARTIAL | UNKNOWN","exceptions":"CONFIRMED | PARTIAL | UNKNOWN","constraints":"CONFIRMED | PARTIAL | UNKNOWN","dependencies":"CONFIRMED | PARTIAL | UNKNOWN","risks":"CONFIRMED | PARTIAL | UNKNOWN","outputNeed":"CONFIRMED | PARTIAL | UNKNOWN"}
 }`
 
 const interviewOptionsPrompt = `あなたはFlowShiftのCore Interview設計役です。Calendarは質問を始める索引にすぎず、予定名から業務内容や廃止可否を推測しません。

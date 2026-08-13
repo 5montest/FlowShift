@@ -17,6 +17,8 @@ export const workObservationSchema = z.object({
   firstOccurredAt: z.string().datetime({ offset: true }),
   lastOccurredAt: z.string().datetime({ offset: true }),
   recurring: z.boolean(),
+  // 削減トラッキングで直近のWorkGroupと突き合わせるための出所id（旧データには無い）
+  sourceGroupId: z.string().trim().min(1).max(600).optional(),
 }).strict()
 
 export const contextStateSchema = z.enum(['CONFIRMED', 'PARTIAL', 'UNKNOWN'])
@@ -110,18 +112,11 @@ export const interviewAnswerSchema = z.object({
 
 export const interviewOptionsRequestSchema = z.object({ observation: workObservationSchema }).strict()
 
-export const contextStatusSchema = z.object({
-  purpose: contextStateSchema,
-  stakeholders: contextStateSchema,
-  roles: contextStateSchema.default('UNKNOWN'),
-  process: contextStateSchema,
-  decisions: contextStateSchema,
-  exceptions: contextStateSchema,
-  constraints: contextStateSchema,
-  dependencies: contextStateSchema,
-  risks: contextStateSchema,
-  output: contextStateSchema,
-}).strict()
+// 文脈10次元の唯一の定義はcontextDimensionSchema。contextStatusのキーをそこから
+// 生成することで、次元名とステータスキーが二度と乖離しないようにする。
+export const contextStatusSchema = z.object(
+  Object.fromEntries(contextDimensionSchema.options.map((dimension) => [dimension, contextStateSchema])) as Record<z.infer<typeof contextDimensionSchema>, typeof contextStateSchema>,
+).strict()
 
 export const businessRoleDetailSchema = z.object({
   name: shortText,

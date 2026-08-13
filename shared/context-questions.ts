@@ -1,14 +1,10 @@
-import type { BusinessTask, ContextDimension, InterviewPlan } from './design-schema.ts'
+import type { ContextDimension, InterviewPlan } from './design-schema.ts'
 
 // contextStatusのキーごとに用意した決定論的な追加質問カタログ。
 // LLM生成の追加質問が使えないときのフォールバック、および「情報を追加」導線の供給源。
-export function questionForContext(key: keyof BusinessTask['contextStatus']): InterviewPlan {
-  const dimensionByKey: Record<keyof BusinessTask['contextStatus'], ContextDimension> = {
-    purpose: 'purpose', stakeholders: 'stakeholders', roles: 'roles', process: 'process', decisions: 'decision', exceptions: 'exceptions', constraints: 'constraints', dependencies: 'dependencies', risks: 'risks', output: 'outputNeed',
-  }
-  const dimension = dimensionByKey[key]
-  const base = { id: `context-${key}`, dimension, phase: 'FOLLOW_UP' as const }
-  const definitions: Record<keyof BusinessTask['contextStatus'], Omit<InterviewPlan['questions'][number], keyof typeof base>> = {
+export function questionForContext(key: ContextDimension): InterviewPlan {
+  const base = { id: `context-${key}`, dimension: key, phase: 'FOLLOW_UP' as const }
+  const definitions: Record<ContextDimension, Omit<InterviewPlan['questions'][number], keyof typeof base>> = {
     purpose: {
       prompt: 'この業務によって、誰が何を把握・判断できる状態にしたいですか？', hint: '会議や成果物ではなく、達成したい状態を選びます。',
       options: [
@@ -49,7 +45,7 @@ export function questionForContext(key: keyof BusinessTask['contextStatus']): In
         { id: 'process-unknown', label: 'まだ分からない', exclusive: true, meaning: { roles: [], processItems: [], contextState: 'UNKNOWN' } },
       ],
     },
-    decisions: {
+    decision: {
       prompt: 'この業務で、人が最終的に判断していることは何ですか？', hint: '最も近いものを選ぶか、具体的な内容を入力します。',
       options: [
         { id: 'decision-priority', label: '対応の要否や優先順位', meaning: { roles: [], contextState: 'CONFIRMED' } },
@@ -97,7 +93,7 @@ export function questionForContext(key: keyof BusinessTask['contextStatus']): In
         { id: 'risk-unknown', label: 'まだ整理できていない', exclusive: true, meaning: { roles: [], contextState: 'UNKNOWN' } },
       ],
     },
-    output: {
+    outputNeed: {
       prompt: '現在の会議・成果物は、目的達成にどの程度必要ですか？', hint: '共有方法と、同期で話す役割を分けて選びます。',
       options: [
         { id: 'context-async', label: '非同期の共有だけで目的を達成できる', meaning: { outputNeed: 'ASYNC_OK', roles: [], contextState: 'CONFIRMED' } },
@@ -112,6 +108,6 @@ export function questionForContext(key: keyof BusinessTask['contextStatus']): In
 
 // LLMによる質問生成が使えないときに、即座にインタビューを始めるための汎用Core 3問。
 export function fallbackCorePlan(): InterviewPlan {
-  const pick = (key: keyof BusinessTask['contextStatus'], id: string) => ({ ...questionForContext(key).questions[0], id, phase: 'CORE' as const })
-  return { phase: 'CORE', questions: [pick('purpose', 'core-purpose'), pick('decisions', 'core-decision'), pick('output', 'core-output')] }
+  const pick = (key: ContextDimension, id: string) => ({ ...questionForContext(key).questions[0], id, phase: 'CORE' as const })
+  return { phase: 'CORE', questions: [pick('purpose', 'core-purpose'), pick('decision', 'core-decision'), pick('outputNeed', 'core-output')] }
 }

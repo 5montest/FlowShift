@@ -1,7 +1,7 @@
-import type { BusinessDesign, BusinessTask, ContextDimension, InterviewAnswer, InterviewPlan, WorkObservation } from './design-schema.ts'
+import type { BusinessDesign, BusinessTask, ContextDimension, InterviewAnswer, InterviewPlan } from './design-schema.ts'
 import { createDeterministicTask } from './interview.ts'
 import type { ImprovementProject } from './project-schema.ts'
-import type { WorkGroup } from './work-group.ts'
+import { toObservation, type WorkGroup } from './work-group.ts'
 
 // チェックスクリプト（scripts/check-*.mjs）用の決定論的フィクスチャ。
 // アプリ本体はデモモードを持たないため、ここを参照するのはテストだけ。
@@ -10,22 +10,22 @@ export const demoWorkGroups: WorkGroup[] = [
   {
     id: 'recurring:morning', title: '朝会', occurrences: 20, totalMinutes: 300, averageMinutes: 15,
     firstOccurredAt: '2026-07-13T00:00:00.000Z', lastOccurredAt: '2026-08-07T00:00:00.000Z', recurringEventId: 'morning', category: '会議',
-    evidence: { recurring: true, occurrenceCount: 20, totalMinutes: 300 },
+    recurring: true,
   },
   {
     id: 'recurring:sales-meeting', title: '営業定例', occurrences: 4, totalMinutes: 240, averageMinutes: 60,
     firstOccurredAt: '2026-07-13T04:00:00.000Z', lastOccurredAt: '2026-08-03T04:00:00.000Z', recurringEventId: 'sales-meeting', category: '会議',
-    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 240 },
+    recurring: true,
   },
   {
     id: 'recurring:sales-report', title: '売上レポート作成', occurrences: 4, totalMinutes: 180, averageMinutes: 45,
     firstOccurredAt: '2026-07-13T01:00:00.000Z', lastOccurredAt: '2026-08-03T01:00:00.000Z', recurringEventId: 'sales-report', category: '資料作成',
-    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 180 },
+    recurring: true,
   },
   {
     id: 'recurring:customer-update', title: '顧客データ更新', occurrences: 4, totalMinutes: 120, averageMinutes: 30,
     firstOccurredAt: '2026-07-14T00:30:00.000Z', lastOccurredAt: '2026-08-04T00:30:00.000Z', recurringEventId: 'customer-update', category: 'データ処理',
-    evidence: { recurring: true, occurrenceCount: 4, totalMinutes: 120 },
+    recurring: true,
   },
 ]
 
@@ -68,18 +68,6 @@ export const demoInterviewPlan: InterviewPlan = {
   ],
 }
 
-function observationFromDemoGroup(group: WorkGroup): WorkObservation {
-  return {
-    title: group.title,
-    occurrences: group.occurrences,
-    totalMinutes: group.totalMinutes,
-    averageMinutes: group.averageMinutes,
-    firstOccurredAt: group.firstOccurredAt,
-    lastOccurredAt: group.lastOccurredAt,
-    recurring: group.evidence.recurring,
-  }
-}
-
 function answerFrom(plan: InterviewPlan, questionIndex: number, optionIndex: number): InterviewAnswer {
   const question = plan.questions[questionIndex]
   const option = question.options[optionIndex]
@@ -95,19 +83,19 @@ function answerFrom(plan: InterviewPlan, questionIndex: number, optionIndex: num
 }
 
 const initialAnswers = [answerFrom(demoInterviewPlan, 0, 0), answerFrom(demoInterviewPlan, 1, 0), answerFrom(demoInterviewPlan, 2, 3)]
-export const initialBusinessTask = createDeterministicTask(observationFromDemoGroup(demoWorkGroups[0]), initialAnswers)
+export const initialBusinessTask = createDeterministicTask(toObservation(demoWorkGroups[0]), initialAnswers)
 
 const unknownDetails: Record<keyof BusinessTask['contextStatus'], { id: string; dimension: ContextDimension; question: string; reason: string }> = {
   purpose: { id: 'purpose', dimension: 'purpose', question: 'この業務の目的を確認できますか？', reason: '目的を取り違えると再設計の方向が変わります。' },
   stakeholders: { id: 'stakeholders', dimension: 'stakeholders', question: '結果を必要とする人は誰ですか？', reason: '利用者を確認しないと必要な情報を落とす可能性があります。' },
   roles: { id: 'roles', dimension: 'roles', question: '予定共有以外の役割はありますか？', reason: '相談や教育の役割がある場合、通知だけには置き換えられません。' },
   process: { id: 'process', dimension: 'process', question: '現在はどのように進めていますか？', reason: '残す工程と変える工程を分けるために必要です。' },
-  decisions: { id: 'decisions', dimension: 'decision', question: '人が判断している箇所はどこですか？', reason: '人に残す判断を特定するために必要です。' },
+  decision: { id: 'decision', dimension: 'decision', question: '人が判断している箇所はどこですか？', reason: '人に残す判断を特定するために必要です。' },
   exceptions: { id: 'exceptions', dimension: 'exceptions', question: '通常と違う対応が必要なのはどんなときですか？', reason: '例外時の安全な運用を設計するために必要です。' },
   constraints: { id: 'constraints', dimension: 'constraints', question: '形式を変えられない制約はありますか？', reason: '実行できない仮説を避けるために必要です。' },
   dependencies: { id: 'dependencies', dimension: 'dependencies', question: '変更で影響を受ける人や他部署はありますか？', reason: '他業務への影響を見落とさないために必要です。' },
   risks: { id: 'risks', dimension: 'risks', question: '変更時に避けたいリスクは何ですか？', reason: '検証時の停止条件を決めるために必要です。' },
-  output: { id: 'output', dimension: 'outputNeed', question: '現在の会議形式は本当に必要ですか？', reason: '手段を残すか分けるかの判断に必要です。' },
+  outputNeed: { id: 'outputNeed', dimension: 'outputNeed', question: '現在の会議形式は本当に必要ですか？', reason: '手段を残すか分けるかの判断に必要です。' },
 }
 
 export function createDemoDesign(task: BusinessTask): BusinessDesign {
@@ -192,7 +180,7 @@ export function createDemoDesign(task: BusinessTask): BusinessDesign {
   }
 }
 
-const demoProjectTask = createDeterministicTask(observationFromDemoGroup(demoWorkGroups[0]), [
+const demoProjectTask = createDeterministicTask(toObservation(demoWorkGroups[0]), [
   answerFrom(demoInterviewPlan, 0, 0),
   answerFrom(demoInterviewPlan, 1, 0),
   answerFrom(demoInterviewPlan, 2, 1),
@@ -219,13 +207,8 @@ const demoProjectDesign = createDemoDesign(demoProjectTask)
 
 export const demoProject: ImprovementProject = {
   id: 'f67d5e79-5de6-44ea-a261-f5797cd34986',
-  taskName: '朝会',
-  businessContext: demoProjectTask,
   proposal: demoProjectDesign,
-  hypothesis: demoProjectDesign.redesign.hypothesis,
-  validations: demoProjectDesign.validationPlan.items,
   status: 'DRAFT',
-  contextDirty: false,
   history: [{ id: '08ef2545-b53f-45ec-b86d-c5520d0bc11f', type: 'CREATED', summary: '再設計仮説を保存', createdAt: '2026-08-11T00:00:00.000Z' }],
   createdAt: '2026-08-11T00:00:00.000Z',
   updatedAt: '2026-08-11T00:00:00.000Z',

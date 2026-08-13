@@ -1,21 +1,26 @@
 import type { CalendarEvent } from './calendar-schema'
+import type { WorkObservation } from './design-schema.ts'
 
 export type WorkCategory = '会議' | '資料作成' | 'データ処理' | '顧客対応' | 'その他'
 
-export type WorkGroup = {
+// WorkGroupは観測（WorkObservation）そのもの＋グルーピング情報。
+// 同じ6フィールドを二重定義しない。
+export type WorkGroup = Omit<WorkObservation, 'sourceGroupId'> & {
   id: string
-  title: string
-  occurrences: number
-  totalMinutes: number
-  averageMinutes: number
-  firstOccurredAt: string
-  lastOccurredAt: string
-  recurringEventId?: string
   category: WorkCategory
-  evidence: {
-    recurring: boolean
-    occurrenceCount: number
-    totalMinutes: number
+  recurringEventId?: string
+}
+
+export function toObservation(group: WorkGroup): WorkObservation {
+  return {
+    title: group.title,
+    occurrences: group.occurrences,
+    totalMinutes: group.totalMinutes,
+    averageMinutes: group.averageMinutes,
+    firstOccurredAt: group.firstOccurredAt,
+    lastOccurredAt: group.lastOccurredAt,
+    recurring: group.recurring,
+    sourceGroupId: group.id,
   }
 }
 
@@ -64,12 +69,8 @@ export function groupCalendarEvents(events: CalendarEvent[]): WorkGroup[] {
       firstOccurredAt: ordered[0].start,
       lastOccurredAt: ordered.at(-1)?.start ?? ordered[0].start,
       ...(recurringEventId ? { recurringEventId } : {}),
+      recurring: Boolean(recurringEventId),
       category: categorizeWork(ordered[0].title),
-      evidence: {
-        recurring: Boolean(recurringEventId),
-        occurrenceCount: ordered.length,
-        totalMinutes,
-      },
     }
   }).sort((left, right) => right.totalMinutes - left.totalMinutes || right.occurrences - left.occurrences || left.title.localeCompare(right.title, 'ja'))
 }
@@ -85,7 +86,7 @@ export function isDiscoveryCandidate(group: WorkGroup): boolean {
 export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iterable<string> = []): WorkGroup[] {
   const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
   const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
-    && ((group.occurrences >= 3 && group.evidence.recurring) || group.totalMinutes >= 120))
+    && ((group.occurrences >= 3 && group.recurring) || group.totalMinutes >= 120))
   const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)
   return [...eligible].sort((left, right) => soloFriendly(right) - soloFriendly(left)
     || right.totalMinutes - left.totalMinutes
@@ -100,11 +101,13 @@ export type WorkReduction = {
   deltaMinutes: number
 }
 
-// 採用した仮説の「どのくらい減ったか」。保存時点の観測値と、直近4週間の同名業務を突き合わせる。
+// 採用した仮説の「どのくらい減ったか」。保存時点の観測値と、直近4週間の同じ業務
+// （出所グループid、無ければ正規化タイトル）を突き合わせる。
 // カレンダーから消えた業務は0回（全削減）として扱う。
-export function computeReduction(baseline: { title: string; occurrences: number; totalMinutes: number }, currentGroups: WorkGroup[]): WorkReduction {
+export function computeReduction(baseline: { title: string; occurrences: number; totalMinutes: number; sourceGroupId?: string }, currentGroups: WorkGroup[]): WorkReduction {
   const key = normalizeWorkTitle(baseline.title)
-  const current = currentGroups.find((group) => normalizeWorkTitle(group.title) === key)
+  const current = (baseline.sourceGroupId ? currentGroups.find((group) => group.id === baseline.sourceGroupId) : undefined)
+    ?? currentGroups.find((group) => normalizeWorkTitle(group.title) === key)
   return {
     baselineOccurrences: baseline.occurrences,
     baselineMinutes: baseline.totalMinutes,
@@ -117,7 +120,7 @@ export function computeReduction(baseline: { title: string; occurrences: number;
 export function summarizeWorkGroups(groups: WorkGroup[]): DiscoverySummary {
   return {
     calendarMinutes: groups.reduce((total, group) => total + group.totalMinutes, 0),
-    recurringMinutes: groups.filter((group) => group.evidence.recurring).reduce((total, group) => total + group.totalMinutes, 0),
+    recurringMinutes: groups.filter((group) => group.recurring).reduce((total, group) => total + group.totalMinutes, 0),
     meetingMinutes: groups.filter((group) => group.category === '会議').reduce((total, group) => total + group.totalMinutes, 0),
     candidateCount: groups.filter(isDiscoveryCandidate).length,
   }

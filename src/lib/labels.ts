@@ -1,8 +1,8 @@
 import type { BusinessTask, ContextState, ProjectStatus } from '../types'
 
 export const contextLabels: Record<keyof BusinessTask['contextStatus'], string> = {
-  purpose: '目的', stakeholders: '関係者・利用者', roles: '確認できている役割', process: '現在の工程', decisions: '人の判断', exceptions: '例外',
-  constraints: '制約', dependencies: '他業務への影響', risks: '変更時のリスク', output: '成果物・会議形式の必要性',
+  purpose: '目的', stakeholders: '関係者・利用者', roles: '確認できている役割', process: '現在の工程', decision: '人の判断', exceptions: '例外',
+  constraints: '制約', dependencies: '他業務への影響', risks: '変更時のリスク', outputNeed: '成果物・会議形式の必要性',
 }
 
 export const validationLabels = {

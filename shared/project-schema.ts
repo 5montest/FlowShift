@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { businessDesignSchema, businessTaskSchema, validationItemSchema } from './design-schema.ts'
+import { businessDesignSchema, businessTaskSchema, contextDimensionSchema, type BusinessTask } from './design-schema.ts'
 
 export const projectStatusSchema = z.enum(['DRAFT', 'VALIDATING', 'ADOPTED', 'REJECTED', 'ON_HOLD'])
 export const projectHistoryTypeSchema = z.enum(['CREATED', 'CONTEXT_UPDATED', 'HYPOTHESIS_UPDATED', 'STATUS_UPDATED'])
@@ -11,34 +11,30 @@ export const projectHistoryItemSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 }).strict()
 
+// v2: 業務コンテクストの正本はproposal.businessTask。
+// 情報を追加して仮説がまだ追いついていない間だけpendingContextが存在する
+// （旧スキーマのcontextDirty + businessContextの置き換え）。
 export const improvementProjectSchema = z.object({
   id: z.string().uuid(),
-  taskName: z.string().trim().min(1).max(240),
-  businessContext: businessTaskSchema,
-  proposal: businessDesignSchema,
-  hypothesis: z.string().trim().min(1).max(800),
-  validations: z.array(validationItemSchema).min(1).max(5),
   status: projectStatusSchema,
-  contextDirty: z.boolean().default(false),
+  proposal: businessDesignSchema,
+  pendingContext: businessTaskSchema.optional(),
   history: z.array(projectHistoryItemSchema).max(200).default([]),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
 }).strict()
 
-export const createProjectRequestSchema = improvementProjectSchema.pick({
-  taskName: true,
-  businessContext: true,
-  proposal: true,
-  hypothesis: true,
-  validations: true,
+export const createProjectRequestSchema = z.object({
+  proposal: businessDesignSchema,
 }).strict()
 
-export const updateProjectContentRequestSchema = createProjectRequestSchema.extend({
+export const updateProjectProposalRequestSchema = z.object({
+  proposal: businessDesignSchema,
   revisionSummary: z.string().trim().min(1).max(500).optional(),
 }).strict()
 
 export const updateProjectContextRequestSchema = z.object({
-  businessContext: businessTaskSchema,
+  pendingContext: businessTaskSchema,
   revisionSummary: z.string().trim().min(1).max(500),
 }).strict()
 
@@ -50,18 +46,38 @@ export const projectListSchema = z.object({
   projects: z.array(improvementProjectSchema).max(200),
 }).strict()
 
-// 保存済み行には旧スキーマ（reviewAtや、UIが表示しないためスキーマから削除した設計フィールド）が
-// 残っている可能性があるため、パース前に取り除く。
+export type ImprovementProject = z.infer<typeof improvementProjectSchema>
+export type ProjectStatus = z.infer<typeof projectStatusSchema>
+
+export function projectContext(project: ImprovementProject): BusinessTask {
+  return project.pendingContext ?? project.proposal.businessTask
+}
+
+export function projectName(project: ImprovementProject): string {
+  return projectContext(project).name
+}
+
+// ---- 保存済み行の読み時アップグレード（v1 -> v2） ----------------------------
+
 const legacyAnalysisKeys = ['purposeCheck', 'problems', 'ratings', 'ratingReasons', 'nextQuestions', 'conventional']
 
-export function stripLegacyProjectFields(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value
-  const project = value as Record<string, unknown>
-  delete project.reviewAt
-  const proposal = project.proposal as Record<string, unknown> | undefined
-  const analysis = proposal?.analysis as Record<string, unknown> | undefined
+function upgradeContextStatus(task: unknown) {
+  if (!task || typeof task !== 'object') return
+  const status = (task as Record<string, unknown>).contextStatus as Record<string, unknown> | undefined
+  if (!status) return
+  if ('decisions' in status) { status.decision = status.decisions; delete status.decisions }
+  if ('output' in status) { status.outputNeed = status.output; delete status.output }
+  for (const dimension of contextDimensionSchema.options) {
+    if (!(dimension in status)) status[dimension] = 'UNKNOWN'
+  }
+}
+
+function upgradeDesign(design: unknown) {
+  if (!design || typeof design !== 'object') return
+  const proposal = design as Record<string, unknown>
+  const analysis = proposal.analysis as Record<string, unknown> | undefined
   if (analysis) for (const key of legacyAnalysisKeys) delete analysis[key]
-  const redesign = proposal?.redesign as Record<string, unknown> | undefined
+  const redesign = proposal.redesign as Record<string, unknown> | undefined
   if (redesign) {
     delete redesign.insight
     if (typeof redesign.hypothesis === 'string' && redesign.hypothesis.length > 200) {
@@ -72,8 +88,28 @@ export function stripLegacyProjectFields(value: unknown): unknown {
       redesign.impact = { assumption: impact.assumption }
     }
   }
-  return project
+  upgradeContextStatus(proposal.businessTask)
 }
 
-export type ImprovementProject = z.infer<typeof improvementProjectSchema>
-export type ProjectStatus = z.infer<typeof projectStatusSchema>
+// D1のproject_json（v1またはv2）をパースする。v1の冗長フィールド
+// （businessContext / hypothesis / validations / taskName / contextDirty / reviewAt）と
+// UI非表示のため削除した設計フィールドを吸収し、contextStatusのキー名を新形へ揃える。
+export function parseStoredProject(value: unknown): ImprovementProject | null {
+  if (!value || typeof value !== 'object') return null
+  const project = { ...(value as Record<string, unknown>) }
+  delete project.reviewAt
+  upgradeDesign(project.proposal)
+  const businessContext = project.businessContext as Record<string, unknown> | undefined
+  if (businessContext) upgradeContextStatus(businessContext)
+  if (project.pendingContext) upgradeContextStatus(project.pendingContext)
+  if (project.contextDirty && businessContext && !project.pendingContext) {
+    project.pendingContext = businessContext
+  }
+  delete project.businessContext
+  delete project.hypothesis
+  delete project.validations
+  delete project.taskName
+  delete project.contextDirty
+  const parsed = improvementProjectSchema.safeParse(project)
+  return parsed.success ? parsed.data : null
+}

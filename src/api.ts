@@ -16,7 +16,7 @@ import {
   type ImprovementProject,
   type ProjectStatus,
 } from '../shared/project-schema'
-import type { WorkGroup } from '../shared/work-group'
+import { toObservation, type WorkGroup } from '../shared/work-group'
 
 const apiErrorSchema = z.object({
   error: z.object({
@@ -81,18 +81,6 @@ function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>, method =
   })
 }
 
-export function observationFrom(group: WorkGroup): WorkObservation {
-  return {
-    title: group.title,
-    occurrences: group.occurrences,
-    totalMinutes: group.totalMinutes,
-    averageMinutes: group.averageMinutes,
-    firstOccurredAt: group.firstOccurredAt,
-    lastOccurredAt: group.lastOccurredAt,
-    recurring: group.evidence.recurring,
-  }
-}
-
 export async function getGoogleCalendarStatus(): Promise<CalendarStatus> {
   return requestJson('/api/google/status', calendarStatusSchema)
 }
@@ -115,12 +103,12 @@ export async function disconnectGoogleCalendar(): Promise<void> {
 }
 
 export async function generateInterviewPlan(group: WorkGroup): Promise<InterviewPlan> {
-  const result = await postJson('/api/interview-options', { observation: observationFrom(group) }, interviewPlanResponseSchema)
+  const result = await postJson('/api/interview-options', { observation: toObservation(group) }, interviewPlanResponseSchema)
   return result.options
 }
 
 export async function extractBusinessTask(answers: InterviewAnswer[], group: WorkGroup): Promise<BusinessTask> {
-  return extractBusinessTaskFromObservation(answers, observationFrom(group))
+  return extractBusinessTaskFromObservation(answers, toObservation(group))
 }
 
 export async function extractBusinessTaskFromObservation(answers: InterviewAnswer[], observation: WorkObservation): Promise<BusinessTask> {
@@ -144,13 +132,7 @@ export async function getImprovementProjects(): Promise<ImprovementProject[]> {
 }
 
 export async function createImprovementProject(design: BusinessDesign): Promise<ImprovementProject> {
-  const result = await postJson('/api/projects', {
-    taskName: design.businessTask.name,
-    businessContext: design.businessTask,
-    proposal: design,
-    hypothesis: design.redesign.hypothesis,
-    validations: design.validationPlan.items,
-  }, projectResponseSchema)
+  const result = await postJson('/api/projects', { proposal: design }, projectResponseSchema)
   return result.project
 }
 
@@ -161,19 +143,15 @@ export async function updateImprovementProjectStatus(id: string, status: Project
 
 export async function updateImprovementProject(id: string, design: BusinessDesign, revisionSummary?: string): Promise<ImprovementProject> {
   const result = await postJson(`/api/projects/${encodeURIComponent(id)}`, {
-    taskName: design.businessTask.name,
-    businessContext: design.businessTask,
     proposal: design,
-    hypothesis: design.redesign.hypothesis,
-    validations: design.validationPlan.items,
     ...(revisionSummary ? { revisionSummary } : {}),
   }, projectResponseSchema, 'PATCH')
   return result.project
 }
 
-export async function updateImprovementProjectContext(id: string, businessContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
+export async function updateImprovementProjectContext(id: string, pendingContext: BusinessTask, revisionSummary: string): Promise<ImprovementProject> {
   const result = await postJson(`/api/projects/${encodeURIComponent(id)}/context`, {
-    businessContext,
+    pendingContext,
     revisionSummary,
   }, projectResponseSchema, 'PATCH')
   return result.project

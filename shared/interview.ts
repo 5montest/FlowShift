@@ -50,7 +50,7 @@ export function finalizeBusinessTask(observed: WorkObservation, answers: Intervi
   const processValues = processAnswer?.meaning?.processItems ?? []
   const contextStatus = {
     ...draft.contextStatus,
-    ...(outputMeaning ? { output: outputMeaning === 'UNKNOWN' ? 'UNKNOWN' as const : 'CONFIRMED' as const } : {}),
+    ...(outputMeaning ? { outputNeed: outputMeaning === 'UNKNOWN' ? 'UNKNOWN' as const : 'CONFIRMED' as const } : {}),
     ...(roleAnswers.length ? { roles: roleState ?? 'UNKNOWN' } : {}),
     ...(stakeholderAnswer ? { stakeholders: stakeholderValues.length ? stakeholderAnswer.meaning?.contextState ?? 'CONFIRMED' : 'UNKNOWN' as const } : {}),
     ...(processAnswer ? { process: processValues.length ? 'CONFIRMED' as const : 'UNKNOWN' as const } : {}),
@@ -142,12 +142,12 @@ export function createDeterministicTask(observed: WorkObservation, answers: Inte
       stakeholders: state('stakeholders'),
       roles: state('roles'),
       process: state('process'),
-      decisions: state('decision'),
+      decision: state('decision'),
       exceptions: state('exceptions'),
       constraints: state('constraints'),
       dependencies: state('dependencies'),
       risks: state('risks'),
-      output: state('outputNeed'),
+      outputNeed: state('outputNeed'),
     },
   })
 }

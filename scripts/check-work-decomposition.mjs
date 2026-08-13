@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
+import { projectContext } from '../shared/project-schema.ts'
 import { decomposeBusinessTask, proposedTreatment } from '../shared/work-decomposition.ts'
 import { demoProject } from '../shared/demo-fixtures.ts'
 
-const components = decomposeBusinessTask(demoProject.businessContext)
+const components = decomposeBusinessTask(projectContext(demoProject))
 const byKind = new Map(components.map((component) => [component.kind, component]))
 
 assert.deepEqual(components.map((component) => component.kind), ['SHARE', 'OBSERVE', 'CONSULT', 'DECIDE', 'EDUCATE'])

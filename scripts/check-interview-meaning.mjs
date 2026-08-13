@@ -20,7 +20,7 @@ const contradictoryDraft = {
   name: '朝会', purpose: 'チームが重要な変更を把握して調整を判断する', frequency: '過去4週間で20回', duration: '1回15分', trigger: '毎朝',
   stakeholders: [], consumer: '未確認', businessRoles: ['通知確認'], tools: [], inputs: [], output: '予定共有', steps: [], decisionPoints: [], exceptions: [], constraints: [], dependencies: [], risks: [],
   outputRequirement: 'NOT_REQUIRED', outputRequirementReason: '通知だけでよい',
-  contextStatus: { purpose: 'CONFIRMED', stakeholders: 'UNKNOWN', roles: 'UNKNOWN', process: 'UNKNOWN', decisions: 'UNKNOWN', exceptions: 'UNKNOWN', constraints: 'UNKNOWN', dependencies: 'UNKNOWN', risks: 'UNKNOWN', output: 'UNKNOWN' },
+  contextStatus: { purpose: 'CONFIRMED', stakeholders: 'UNKNOWN', roles: 'UNKNOWN', process: 'UNKNOWN', decision: 'UNKNOWN', exceptions: 'UNKNOWN', constraints: 'UNKNOWN', dependencies: 'UNKNOWN', risks: 'UNKNOWN', outputNeed: 'UNKNOWN' },
 }
 
 const task = finalizeBusinessTask(observation, [consultationAnswer], contradictoryDraft)

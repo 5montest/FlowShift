@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { designRequestSchema, followUpRequestSchema, interviewOptionsRequestSchema, interviewRequestSchema } from '../shared/design-schema'
-import { createProjectRequestSchema, improvementProjectSchema, projectListSchema, stripLegacyProjectFields, updateProjectContentRequestSchema, updateProjectContextRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
+import { createProjectRequestSchema, improvementProjectSchema, parseStoredProject, projectListSchema, projectName, updateProjectContextRequestSchema, updateProjectProposalRequestSchema, updateProjectStatusRequestSchema } from '../shared/project-schema'
 import { createBusinessDesign, createFollowUpQuestions, createInterviewOptions, DeepSeekError, deepSeekModel, extractBusinessTask } from './deepseek'
 import {
   clearGoogleOAuthCookie,
@@ -161,8 +161,8 @@ app.get('/api/projects', async (c) => {
   ).bind(session.userId).all<{ project_json: string }>()
   const projects = rows.results.flatMap((row) => {
     try {
-      const parsed = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
-      return parsed.success ? [parsed.data] : []
+      const parsed = parseStoredProject(JSON.parse(row.project_json))
+      return parsed ? [parsed] : []
     } catch {
       return []
     }
@@ -183,16 +183,15 @@ app.post('/api/projects', async (c) => {
   const now = new Date()
   const project = improvementProjectSchema.parse({
     id: crypto.randomUUID(),
-    ...input.data,
+    proposal: input.data.proposal,
     status: 'DRAFT',
-    contextDirty: false,
     history: [{ id: crypto.randomUUID(), type: 'CREATED', summary: '再設計仮説を保存', createdAt: now.toISOString() }],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   })
   await c.env.DB.prepare(
     'INSERT INTO improvement_projects (id, user_id, task_name, status, project_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).bind(project.id, session.userId, project.taskName, project.status, JSON.stringify(project), now.getTime(), now.getTime()).run()
+  ).bind(project.id, session.userId, projectName(project), project.status, JSON.stringify(project), now.getTime(), now.getTime()).run()
   return c.json({ project }, 201, { 'Cache-Control': 'no-store' })
 })
 
@@ -208,13 +207,13 @@ app.patch('/api/projects/:id/status', async (c) => {
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
-  if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
+  const current = parseStoredProject(JSON.parse(row.project_json))
+  if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
   const now = new Date()
   const project = improvementProjectSchema.parse({
-    ...current.data,
+    ...current,
     status: input.data.status,
-    history: [...current.data.history, {
+    history: [...current.history, {
       id: crypto.randomUUID(),
       type: 'STATUS_UPDATED',
       summary: `状態を「${projectStatusLabels[input.data.status]}」へ変更`,
@@ -241,16 +240,14 @@ app.patch('/api/projects/:id/context', async (c) => {
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
-  if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
+  const current = parseStoredProject(JSON.parse(row.project_json))
+  if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
 
   const now = new Date()
   const project = improvementProjectSchema.parse({
-    ...current.data,
-    taskName: input.data.businessContext.name,
-    businessContext: input.data.businessContext,
-    contextDirty: true,
-    history: [...current.data.history, {
+    ...current,
+    pendingContext: input.data.pendingContext,
+    history: [...current.history, {
       id: crypto.randomUUID(),
       type: 'CONTEXT_UPDATED',
       summary: input.data.revisionSummary,
@@ -260,7 +257,7 @@ app.patch('/api/projects/:id/context', async (c) => {
   })
   await c.env.DB.prepare(
     'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(project.taskName, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
+  ).bind(projectName(project), JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
 })
 
@@ -270,33 +267,33 @@ app.patch('/api/projects/:id', async (c) => {
   if (requestIsTooLarge(c.req.raw)) return errorResponse('payload_too_large', 'Request body is too large.', requestId, 413)
   const session = await getGoogleSession(c.req.raw, c.env)
   if (!session) return errorResponse('authentication_required', 'Google Calendarを接続してください。', requestId, 401)
-  const input = updateProjectContentRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
+  const input = updateProjectProposalRequestSchema.safeParse(await c.req.json<unknown>().catch(() => null))
   if (!input.success) return errorResponse('invalid_request', 'ImprovementProject input is invalid.', requestId, 400)
 
   const row = await c.env.DB.prepare(
     'SELECT project_json FROM improvement_projects WHERE id = ? AND user_id = ?',
   ).bind(c.req.param('id'), session.userId).first<{ project_json: string }>()
   if (!row) return errorResponse('project_not_found', '改善プロジェクトが見つかりません。', requestId, 404)
-  const current = improvementProjectSchema.safeParse(stripLegacyProjectFields(JSON.parse(row.project_json)))
-  if (!current.success) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
+  const current = parseStoredProject(JSON.parse(row.project_json))
+  if (!current) return errorResponse('invalid_project', '保存済みデータを確認できませんでした。', requestId, 500)
 
   const now = new Date()
-  const { revisionSummary, ...content } = input.data
+  // 仮説を更新したら、反映待ちの業務コンテクストは解消される
+  const { pendingContext: _resolved, ...rest } = current
   const project = improvementProjectSchema.parse({
-    ...current.data,
-    ...content,
-    contextDirty: false,
-    history: [...current.data.history, {
+    ...rest,
+    proposal: input.data.proposal,
+    history: [...current.history, {
       id: crypto.randomUUID(),
       type: 'HYPOTHESIS_UPDATED',
-      summary: revisionSummary ?? '追加した業務情報を反映して仮説を更新',
+      summary: input.data.revisionSummary ?? '追加した業務情報を反映して仮説を更新',
       createdAt: now.toISOString(),
     }],
     updatedAt: now.toISOString(),
   })
   await c.env.DB.prepare(
     'UPDATE improvement_projects SET task_name = ?, project_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-  ).bind(project.taskName, JSON.stringify(project), now.getTime(), project.id, session.userId).run()
+  ).bind(projectName(project), JSON.stringify(project), now.getTime(), project.id, session.userId).run()
   return c.json({ project }, 200, { 'Cache-Control': 'no-store' })
 })
 

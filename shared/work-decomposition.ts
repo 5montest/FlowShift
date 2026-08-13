@@ -69,15 +69,15 @@ export function decomposeBusinessTask(task: BusinessTask): WorkComponent[] {
   }
 
   if (task.deliveryModel.sharingMode !== 'UNKNOWN') {
-    add('予定・情報の共有', task.contextStatus.output, 'ALL', task.deliveryModel.sourceQuestionId ? [task.deliveryModel.sourceQuestionId] : [])
+    add('予定・情報の共有', task.contextStatus.outputNeed, 'ALL', task.deliveryModel.sourceQuestionId ? [task.deliveryModel.sourceQuestionId] : [])
   }
   for (const step of task.steps) add(step, task.contextStatus.process, 'ALL', questionIds(task, ['process']))
   for (const role of task.businessRoleDetails.filter((item) => item.present)) {
     const roleState = role.scope === 'ALL' ? 'CONFIRMED' : role.scope === 'UNKNOWN' ? 'UNKNOWN' : 'PARTIAL'
     add(role.name, roleState, role.scope, [role.sourceQuestionId], role.scopeDetail)
   }
-  for (const decision of task.decisionPoints) add(decision, task.contextStatus.decisions, 'ALL', questionIds(task, ['decision']))
-  if (task.contextStatus.output !== 'UNKNOWN') add(task.output, task.contextStatus.output, 'ALL', questionIds(task, ['outputNeed']))
+  for (const decision of task.decisionPoints) add(decision, task.contextStatus.decision, 'ALL', questionIds(task, ['decision']))
+  if (task.contextStatus.outputNeed !== 'UNKNOWN') add(task.output, task.contextStatus.outputNeed, 'ALL', questionIds(task, ['outputNeed']))
 
   return kindOrder.flatMap((kind) => components.get(kind) ?? [])
 }
