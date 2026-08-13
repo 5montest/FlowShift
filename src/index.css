@@ -538,6 +538,7 @@ summary:focus-visible {
 .group-detail-facts dt { color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); }
 .group-detail-facts dd { margin: 0; font-size: var(--fs-type-compact-size); font-weight: 750; text-align: right; }
 .group-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.mute-toggle { min-height: 40px; margin-top: 10px; padding: 0; color: var(--fs-color-text-muted); font-size: var(--fs-type-dense-size); text-decoration: underline; text-underline-offset: 3px; }
 
 /* Session extras */
 .plan-source-note { margin: 0 0 18px; padding: 10px 14px; color: var(--fs-color-text-secondary); background: var(--fs-color-assumption-soft); font-size: var(--fs-type-dense-size); line-height: 1.6; }

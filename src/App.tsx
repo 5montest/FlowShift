@@ -22,6 +22,7 @@ import {
 } from './api'
 import AppHeader from './components/AppHeader'
 import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
+import { listMutedWork, muteWork, unmuteWork } from './lib/preferences'
 import ConnectScreen from './screens/ConnectScreen'
 import WorkspaceScreen from './screens/WorkspaceScreen'
 import SessionScreen from './screens/SessionScreen'
@@ -89,6 +90,7 @@ export default function App() {
   const [flow, setFlow] = useState<SessionFlow>(emptyFlow)
   const [savedProject, setSavedProject] = useState<ImprovementProject | null>(null)
   const [drafts, setDrafts] = useState<SessionDraft[]>(() => listDrafts())
+  const [mutedWork, setMutedWork] = useState<Set<string>>(() => listMutedWork())
 
   // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
   const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
@@ -178,7 +180,7 @@ export default function App() {
       setNeedsReconnect(false)
       setScreen('workspace')
       const activeTitles = savedProjects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title)
-      const focus = rankDiscoveryCandidates(nextGroups, activeTitles)[0]
+      const focus = rankDiscoveryCandidates(nextGroups, [...activeTitles, ...mutedWork])[0]
       // 下書きがあるなら質問はその中にあるので先読みしない
       if (focus && !loadDraft(focus.id)) prefetchPlan(focus).catch(() => {})
     } catch (error) {
@@ -425,6 +427,14 @@ export default function App() {
     setScreen('note')
   }
 
+  function handleMuteWork(title: string) {
+    setMutedWork(muteWork(title))
+  }
+
+  function handleUnmuteWork(title: string) {
+    setMutedWork(unmuteWork(title))
+  }
+
   function discardDraft(groupId: string) {
     deleteDraft(groupId)
     // 同じ業務のセッションがメモリに残っていると、遅延したsetFlow→自動保存で
@@ -468,7 +478,7 @@ export default function App() {
   return <div className="app-shell">
     <AppHeader screen={screen} canRestart={screen === 'session' || screen === 'hypothesis'} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
-    {screen === 'workspace' && <WorkspaceScreen email={calendar.email} groups={groups} projects={projects} drafts={drafts} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onDisconnect={disconnect} />}
+    {screen === 'workspace' && <WorkspaceScreen email={calendar.email} groups={groups} projects={projects} drafts={drafts} mutedWork={mutedWork} busy={calendarBusy} error={calendarError} needsReconnect={needsReconnect} savedNotice={workspaceNotice} calendarRange={calendarRange} fetchedAt={fetchedAt} onRefresh={loadWorkspace} onReconnect={() => { window.location.href = '/api/google/connect' }} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onMuteWork={handleMuteWork} onUnmuteWork={handleUnmuteWork} onDisconnect={disconnect} />}
     {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} planSource={flow.planSource} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} askedQuestions={flow.askedQuestions} refining={flow.refining} onAnswer={handleAnswer} onRetryRefine={retryRefine} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} savedProject={savedProject} onBackToSession={() => setScreen('session')} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} onDelete={deleteProject} />}

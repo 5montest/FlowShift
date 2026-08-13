@@ -11,11 +11,12 @@ type CalendarRange = { timeMin: string; timeMax: string } | null
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 進行中の仮説・採用済み仮説の削減）を置く。
-export default function WorkspaceScreen({ email, groups, projects, drafts, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onDisconnect }: {
+export default function WorkspaceScreen({ email, groups, projects, drafts, mutedWork, busy, error, needsReconnect, savedNotice, calendarRange, fetchedAt, onRefresh, onReconnect, onStartSession, onOpenProject, onDiscardDraft, onMuteWork, onUnmuteWork, onDisconnect }: {
   email?: string
   groups: WorkGroup[]
   projects: ImprovementProject[]
   drafts: SessionDraft[]
+  mutedWork: Set<string>
   busy: boolean
   error: string
   needsReconnect: boolean
@@ -27,6 +28,8 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, busy,
   onStartSession: (group: WorkGroup) => void
   onOpenProject: (project: ImprovementProject) => void
   onDiscardDraft: (groupId: string) => void
+  onMuteWork: (title: string) => void
+  onUnmuteWork: (title: string) => void
   onDisconnect: () => Promise<void>
 }) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -37,7 +40,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, busy,
   // 却下した業務はまた声かけの候補に戻す（進行中・採用・保留のみ除外）
   const activeTitles = useMemo(() => projects.filter((project) => project.status !== 'REJECTED').map((project) => projectContext(project).observed.title), [projects])
   const activeTitleKeys = useMemo(() => new Set(activeTitles.map(normalizeWorkTitle)), [activeTitles])
-  const candidates = useMemo(() => rankDiscoveryCandidates(groups, activeTitles), [groups, activeTitles])
+  const candidates = useMemo(() => rankDiscoveryCandidates(groups, [...activeTitles, ...mutedWork]), [groups, activeTitles, mutedWork])
   const allCandidates = useMemo(() => rankDiscoveryCandidates(groups), [groups])
   const focus = candidates[0]
   const mentions = candidates.slice(0, 2)
@@ -57,7 +60,7 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, busy,
   const timeFormat = new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
   function pickerRow(group: WorkGroup) {
-    return <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>
+    return <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{draftIds.has(group.id) && '・下書きあり'}{activeTitleKeys.has(normalizeWorkTitle(group.title)) && '・仮説あり'}{mutedWork.has(normalizeWorkTitle(group.title)) && '・声かけ対象外'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>
   }
 
   return <main className="dashboard-main">
@@ -150,6 +153,9 @@ export default function WorkspaceScreen({ email, groups, projects, drafts, busy,
         {detailDraft && <div><dt>下書き</dt><dd>{draftProgressLabel(detailDraft)}</dd></div>}
         {detailProject && <div><dt>仮説</dt><dd>{projectStatusLabels[detailProject.status]}</dd></div>}
       </dl>
+      {mutedWork.has(normalizeWorkTitle(detailGroup.title))
+        ? <button type="button" className="text-button mute-toggle" onClick={() => onUnmuteWork(detailGroup.title)}>声かけの対象に戻す</button>
+        : <button type="button" className="text-button mute-toggle" onClick={() => onMuteWork(detailGroup.title)}>この業務は声かけの対象外にする（休憩・私用など）</button>}
       <div className="group-detail-actions">
         <button type="button" className="secondary-button" onClick={() => setDetailGroup(null)}>閉じる</button>
         {detailProject && <button type="button" className="secondary-button" onClick={() => { setDetailGroup(null); onOpenProject(detailProject) }}>仮説を開く</button>}

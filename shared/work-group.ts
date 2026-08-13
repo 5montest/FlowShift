@@ -82,14 +82,22 @@ export function isDiscoveryCandidate(group: WorkGroup): boolean {
   return group.occurrences >= 2 || group.totalMinutes >= 60 || ['資料作成', 'データ処理'].includes(group.category)
 }
 
+// タイトルから明らかに業務でない予定（休憩・食事・休暇・私用・移動など）を見分ける。
+// 声かけの対象から外すためだけに使い、一覧や内訳からは消さない。
+export function isLikelyPersonal(title: string): boolean {
+  return /(休憩|昼休|ランチ|lunch|朝食|昼食|夕食|食事|休暇|有休|有給|私用|通院|健診|検診|病院|歯医者|美容院|ジム|移動|送迎|不在|外出|ブロック)/i.test(title)
+}
+
 // 声かけ（アプリから先に話しかける）対象の選定。
 // isDiscoveryCandidateはほぼ全件を通すため、ここではより強い条件で絞り込む：
-// ①除外タイトル（保存済みプロジェクト等）を外す ②繰り返し3回以上、または合計2時間以上
+// ①除外タイトル（保存済みプロジェクト・ユーザーが対象外にしたもの等）と業務でない予定を外す
+// ②繰り返しが対象（定例3回以上、または2回以上かつ合計2時間以上。単発は選ばない）
 // ③1人で完結しやすい資料作成・データ処理を優先し、同点は合計時間の多い順。
 export function rankDiscoveryCandidates(groups: WorkGroup[], excludeTitles: Iterable<string> = []): WorkGroup[] {
   const excluded = new Set([...excludeTitles].map(normalizeWorkTitle))
   const eligible = groups.filter((group) => !excluded.has(normalizeWorkTitle(group.title))
-    && ((group.occurrences >= 3 && group.recurring) || group.totalMinutes >= 120))
+    && !isLikelyPersonal(group.title)
+    && ((group.occurrences >= 3 && group.recurring) || (group.occurrences >= 2 && group.totalMinutes >= 120)))
   const soloFriendly = (group: WorkGroup) => (['資料作成', 'データ処理'].includes(group.category) ? 1 : 0)
   return [...eligible].sort((left, right) => soloFriendly(right) - soloFriendly(left)
     || right.totalMinutes - left.totalMinutes
