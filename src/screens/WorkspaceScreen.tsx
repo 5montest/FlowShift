@@ -2,25 +2,30 @@ import { useMemo, useState } from 'react'
 import { ArrowRight, Check, TrendingDown } from 'lucide-react'
 import { projectContext, projectName } from '../../shared/project-schema'
 import { computeReduction, rankDiscoveryCandidates, summarizeWorkGroups } from '../../shared/work-group'
+import { draftProgressLabel } from '../lib/drafts'
 import { formatMinutes } from '../lib/format'
 import { projectStatusLabels } from '../lib/labels'
-import type { ImprovementProject, WorkGroup } from '../types'
+import type { ImprovementProject, SessionDraft, WorkGroup } from '../types'
 
 // 接続済みユーザーのホーム。アプリが最初に話しかけ、その下に定点観測（時間の内訳・
 // 検証中の仮説・採用済み仮説の削減）を置く。
-export default function WorkspaceScreen({ email, groups, projects, busy, error, savedNotice, onRefresh, onStartSession, onOpenProject, onDisconnect }: {
+export default function WorkspaceScreen({ email, groups, projects, drafts, busy, error, savedNotice, onRefresh, onStartSession, onOpenProject, onDiscardDraft, onDisconnect }: {
   email?: string
   groups: WorkGroup[]
   projects: ImprovementProject[]
+  drafts: SessionDraft[]
   busy: boolean
   error: string
   savedNotice: string
   onRefresh: () => Promise<void>
   onStartSession: (group: WorkGroup) => void
   onOpenProject: (project: ImprovementProject) => void
+  onDiscardDraft: (groupId: string) => void
   onDisconnect: () => Promise<void>
 }) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [confirmDiscard, setConfirmDiscard] = useState<SessionDraft | null>(null)
+  const draftIds = useMemo(() => new Set(drafts.map((draft) => draft.group.id)), [drafts])
   const summary = useMemo(() => summarizeWorkGroups(groups), [groups])
   const candidates = useMemo(() => rankDiscoveryCandidates(groups, projects.map((project) => projectContext(project).observed.title)), [groups, projects])
   const focus = candidates[0]
@@ -42,11 +47,13 @@ export default function WorkspaceScreen({ email, groups, projects, busy, error, 
           {mentions.map((group, index) => <span key={group.id}><strong>{group.title}</strong>を{group.occurrences}回（合計{formatMinutes(group.totalMinutes)}）{index < mentions.length - 1 ? '、' : ''}<br /></span>)}
           行っています。
         </p>
-        <p className="opening-ask">まず「{focus.title}」について、実際には何をしているか教えてください。<br />3つの質問に答えると、この業務の整理ができます。</p>
+        {draftIds.has(focus.id)
+          ? <p className="opening-ask">「{focus.title}」の続きから再開できます。<br />前回の回答はそのまま残っています。</p>
+          : <p className="opening-ask">まず「{focus.title}」について、実際には何をしているか教えてください。<br />3つの質問に答えると、この業務の整理ができます。</p>}
         <div className="opening-actions">
-          <button type="button" className="primary-button" onClick={() => onStartSession(focus)}>{focus.title}について答える<ArrowRight size={20} /></button>
+          <button type="button" className="primary-button" onClick={() => onStartSession(focus)}>{draftIds.has(focus.id) ? `「${focus.title}」の続きから答える` : `${focus.title}について答える`}<ArrowRight size={20} /></button>
           <details className="work-picker"><summary>別の業務から始める</summary>
-            <div className="work-picker-list">{groups.map((group) => <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>)}</div>
+            <div className="work-picker-list">{groups.map((group) => <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{draftIds.has(group.id) && '・下書きあり'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>)}</div>
           </details>
         </div>
       </> : <>
@@ -54,13 +61,23 @@ export default function WorkspaceScreen({ email, groups, projects, busy, error, 
         <p className="opening-ask">業務を1つ選んで、実際には何をしているか教えてください。</p>
         <div className="opening-actions">
           {groups.length ? <details className="work-picker" open><summary>業務を選ぶ</summary>
-            <div className="work-picker-list">{groups.map((group) => <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>)}</div>
+            <div className="work-picker-list">{groups.map((group) => <button key={group.id} type="button" onClick={() => onStartSession(group)}><span><strong>{group.title}</strong><small>{group.category}・平均{formatMinutes(group.averageMinutes)}{draftIds.has(group.id) && '・下書きあり'}</small></span><span>{group.occurrences}回</span><span>{formatMinutes(group.totalMinutes)}</span></button>)}</div>
           </details> : <p className="opening-empty">カレンダーに時間のある予定が登録されると、ここから始められます。</p>}
         </div>
       </>}
     </section>
     {savedNotice && <p className="workspace-notice" role="status"><Check size={18} />{savedNotice}</p>}
     {error && <p className="calendar-error" role="alert">{error}</p>}
+    {drafts.length > 0 && <section className="session-drafts" aria-label="作業中の下書き">
+      <header><h2>作業中の下書き</h2><p>途中まで答えた業務です。このブラウザにだけ保存され、30日で自動的に消えます。</p></header>
+      <div>{drafts.map((draft) => <div key={draft.group.id} className="draft-row">
+        <button type="button" className="draft-resume" onClick={() => onStartSession(draft.group)}>
+          <span><strong>{draft.group.title}</strong><small>{draftProgressLabel(draft)}・{new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(draft.updatedAt))}</small></span>
+          <span className="draft-continue">続きから答える<ArrowRight size={18} /></span>
+        </button>
+        <button type="button" className="text-button" onClick={() => setConfirmDiscard(draft)}>破棄</button>
+      </div>)}</div>
+    </section>}
     <div className="dashboard-grid">
       <section className="work-breakdown"><header><h2>業務時間の内訳</h2><p>過去4週間の合計{formatMinutes(summary.calendarMinutes)}。棒を選ぶと業務まで見られます。</p></header>
         {categories.length ? <div className="category-bars">{categories.map(([category, minutes]) => <button key={category} type="button" aria-pressed={selectedCategory === category} onClick={() => setSelectedCategory((current) => current === category ? null : category)}><span>{category}</span><i><b style={{ width: `${Math.max(6, Math.round(minutes / maxCategoryMinutes * 100))}%` }} /></i><strong>{formatMinutes(minutes)}</strong></button>)}</div> : <p>カレンダーの業務を取得すると内訳が表示されます。</p>}
@@ -91,5 +108,6 @@ export default function WorkspaceScreen({ email, groups, projects, busy, error, 
       {projects.length ? <div className="project-list">{projects.map((project) => <button key={project.id} type="button" onClick={() => onOpenProject(project)}><span><strong>{projectName(project)}</strong><small>{new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(project.updatedAt))}</small></span><span className={`project-status status-${project.status.toLowerCase()}`}>{projectStatusLabels[project.status]}</span><ArrowRight size={20} /></button>)}</div> : <p className="empty-projects-inline">保存した仮説はまだありません。</p>}
     </details>
     <div className="dashboard-actions"><span className="workspace-account">{email ? `${email} で利用中` : ''}</span><div><button type="button" className="secondary-button" disabled={busy} onClick={() => void onRefresh()}>{busy ? '更新中' : 'カレンダーを更新'}</button><button type="button" className="text-button" onClick={() => void onDisconnect()}>接続を解除</button></div></div>
+    {confirmDiscard && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-heading"><h2 id="discard-heading">下書きを破棄しますか？</h2><p>「{confirmDiscard.group.title}」の回答と作成済みの仮説を、このブラウザから削除します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setConfirmDiscard(null)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { onDiscardDraft(confirmDiscard.group.id); setConfirmDiscard(null) }}>破棄する</button></div></section></div>}
   </main>
 }

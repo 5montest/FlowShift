@@ -1,15 +1,18 @@
+import { z } from 'zod'
 import type { CalendarEvent } from './calendar-schema'
-import type { WorkObservation } from './design-schema.ts'
+import { workObservationSchema, type WorkObservation } from './design-schema.ts'
 
-export type WorkCategory = '会議' | '資料作成' | 'データ処理' | '顧客対応' | 'その他'
+export const workCategorySchema = z.enum(['会議', '資料作成', 'データ処理', '顧客対応', 'その他'])
+export type WorkCategory = z.infer<typeof workCategorySchema>
 
 // WorkGroupは観測（WorkObservation）そのもの＋グルーピング情報。
-// 同じ6フィールドを二重定義しない。
-export type WorkGroup = Omit<WorkObservation, 'sourceGroupId'> & {
-  id: string
-  category: WorkCategory
-  recurringEventId?: string
-}
+// 同じ6フィールドを二重定義しない。下書き（session draft）の検証にも使うためschema化している。
+export const workGroupSchema = workObservationSchema.omit({ sourceGroupId: true }).extend({
+  id: z.string().min(1).max(1100),
+  category: workCategorySchema,
+  recurringEventId: z.string().min(1).max(1024).optional(),
+}).strict()
+export type WorkGroup = z.infer<typeof workGroupSchema>
 
 export function toObservation(group: WorkGroup): WorkObservation {
   return {

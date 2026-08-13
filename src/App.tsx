@@ -19,6 +19,7 @@ import {
   updateImprovementProjectStatus,
 } from './api'
 import AppHeader from './components/AppHeader'
+import { clearAllDrafts, deleteDraft, listDrafts, loadDraft, saveDraft } from './lib/drafts'
 import ConnectScreen from './screens/ConnectScreen'
 import WorkspaceScreen from './screens/WorkspaceScreen'
 import SessionScreen from './screens/SessionScreen'
@@ -34,6 +35,7 @@ import type {
   InterviewQuestion,
   ProjectStatus,
   Screen,
+  SessionDraft,
   WorkGroup,
 } from './types'
 
@@ -69,6 +71,7 @@ export default function App() {
   const [showRestartConfirm, setShowRestartConfirm] = useState(false)
   const [flow, setFlow] = useState<SessionFlow>(emptyFlow)
   const [savedProject, setSavedProject] = useState<ImprovementProject | null>(null)
+  const [drafts, setDrafts] = useState<SessionDraft[]>(() => listDrafts())
 
   // 声かけ表示中に焦点業務の質問を先読みしておくキャッシュ（グループid→Promise）
   const planCache = useRef(new Map<string, Promise<InterviewPlan>>())
@@ -82,6 +85,39 @@ export default function App() {
   }, [])
 
   useEffect(() => { window.scrollTo({ top: 0 }) }, [screen])
+
+  function refreshDrafts() {
+    setDrafts(listDrafts())
+  }
+
+  // 回答途中のセッションを自動で下書き保存する（明示的な保存操作は不要）。
+  // refining / designError は一時状態なので保存しない。
+  useEffect(() => {
+    if (!flow.group || !flow.plan) return
+    if (flow.answers.length === 0 && !flow.design) return
+    saveDraft({
+      version: 1,
+      group: flow.group,
+      plan: flow.plan,
+      answers: flow.answers,
+      pendingQuestions: flow.pendingQuestions,
+      task: flow.task,
+      refinedTask: flow.refinedTask,
+      design: flow.design,
+      updatedAt: new Date().toISOString(),
+    })
+  }, [flow])
+
+  // ワークスペースへ戻るたびに下書き一覧を読み直す（別タブの更新も拾う）
+  useEffect(() => {
+    if (screen === 'workspace') refreshDrafts()
+  }, [screen])
+
+  useEffect(() => {
+    const onStorage = () => refreshDrafts()
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   function prefetchPlan(group: WorkGroup): Promise<InterviewPlan> {
     const cached = planCache.current.get(group.id)
@@ -114,7 +150,8 @@ export default function App() {
       setProjects(savedProjects)
       setScreen('workspace')
       const focus = rankDiscoveryCandidates(nextGroups, savedProjects.map((project) => projectContext(project).observed.title))[0]
-      if (focus) prefetchPlan(focus).catch(() => {})
+      // 下書きがあるなら質問はその中にあるので先読みしない
+      if (focus && !loadDraft(focus.id)) prefetchPlan(focus).catch(() => {})
     } catch (error) {
       setCalendarError(error instanceof Error ? error.message : 'ワークスペースを読み込めませんでした。')
       setScreen(calendar.connected ? 'workspace' : 'connect')
@@ -145,7 +182,25 @@ export default function App() {
   }
 
   function startSession(group: WorkGroup) {
+    const draft = loadDraft(group.id)
     clearSession()
+    if (draft) {
+      // 中断していた続きから再開する
+      setFlow({
+        ...emptyFlow,
+        group: draft.group,
+        plan: draft.plan,
+        answers: draft.answers,
+        task: draft.task,
+        refinedTask: draft.refinedTask,
+        pendingQuestions: draft.pendingQuestions,
+        design: draft.design,
+      })
+      setScreen('session')
+      const coreDone = draft.plan.questions.every((question) => draft.answers.some((answer) => answer.questionId === question.id))
+      if (coreDone && !draft.design && draft.pendingQuestions.length === 0) void refineInBackground(draft.group, draft.answers)
+      return
+    }
     setFlow({ ...emptyFlow, group })
     setScreen('session')
     const token = sessionToken.current
@@ -175,6 +230,9 @@ export default function App() {
         answers: nextAnswers,
         task: nextTask,
         pendingQuestions: current.pendingQuestions.filter((question) => question.id !== answer.questionId),
+        // 回答が増えたら生成済み仮説は古くなるので破棄（次に進むとき再生成）
+        design: null,
+        designError: '',
       }
     })
   }
@@ -217,12 +275,13 @@ export default function App() {
   }
 
   async function proceedToHypothesis() {
-    const { group, task, answers } = flow
+    const { group, task, answers, design } = flow
     if (!group) return
     const finalTask = task ?? await extractBusinessTask(answers, group)
     setFlow((current) => ({ ...current, task: finalTask }))
     setScreen('hypothesis')
-    void generateDesign(finalTask)
+    // 下書きから復元した仮説があればLLMを呼び直さない（回答が増えるとhandleAnswerがdesignを破棄する）
+    if (!design) void generateDesign(finalTask)
   }
 
   async function generateDesign(forTask: BusinessTask) {
@@ -240,6 +299,12 @@ export default function App() {
   async function saveProject() {
     if (!flow.design) return
     const project = await createImprovementProject(flow.design)
+    // 保存できたら下書きは役目を終える。遅延中のバックグラウンド整理がsetFlowで
+    // 下書きを復活させないよう、セッションも原子的に終了する。
+    if (flow.group) deleteDraft(flow.group.id)
+    sessionToken.current += 1
+    setFlow(emptyFlow)
+    refreshDrafts()
     setSavedProject(project); setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)])
     setWorkspaceNotice(`${projectName(project)}を、検証する仮説として保存しました。`)
     setScreen('workspace')
@@ -278,12 +343,21 @@ export default function App() {
     setScreen('note')
   }
 
+  function discardDraft(groupId: string) {
+    deleteDraft(groupId)
+    // 同じ業務のセッションがメモリに残っていると、遅延したsetFlow→自動保存で
+    // 削除済み下書きが復活するため、セッションごと破棄する
+    if (flow.group?.id === groupId) clearSession()
+    refreshDrafts()
+  }
+
   async function disconnect() {
     setCalendarBusy(true); setCalendarError('')
     try {
       await disconnectGoogleCalendar()
       setCalendar({ configured: calendar.configured, connected: false, loading: false })
       clearSession(); setGroups([]); setProjects([]); planCache.current.clear()
+      clearAllDrafts(); refreshDrafts()
       setScreen('connect')
     } catch (error) {
       setCalendarError(error instanceof Error ? error.message : '接続を解除できませんでした。')
@@ -302,10 +376,10 @@ export default function App() {
   return <div className="app-shell">
     <AppHeader screen={screen} onBack={goBack} onHome={goHome} onRestart={() => setShowRestartConfirm(true)} />
     {screen === 'connect' && <ConnectScreen calendar={calendar} error={calendarError} onConnect={() => { window.location.href = '/api/google/connect' }} />}
-    {screen === 'workspace' && <WorkspaceScreen email={calendar.email} groups={groups} projects={projects} busy={calendarBusy} error={calendarError} savedNotice={workspaceNotice} onRefresh={loadWorkspace} onStartSession={startSession} onOpenProject={openProject} onDisconnect={disconnect} />}
+    {screen === 'workspace' && <WorkspaceScreen email={calendar.email} groups={groups} projects={projects} drafts={drafts} busy={calendarBusy} error={calendarError} savedNotice={workspaceNotice} onRefresh={loadWorkspace} onStartSession={startSession} onOpenProject={openProject} onDiscardDraft={discardDraft} onDisconnect={disconnect} />}
     {screen === 'session' && flow.group && <SessionScreen group={flow.group} plan={flow.plan} answers={flow.answers} task={flow.task} pendingQuestions={flow.pendingQuestions} refining={flow.refining} onAnswer={handleAnswer} onProceed={proceedToHypothesis} />}
     {screen === 'hypothesis' && flow.task && <HypothesisScreen task={flow.task} design={flow.design} designError={flow.designError} connected={calendar.connected} savedProject={savedProject} onRetry={() => flow.task && void generateDesign(flow.task)} onSave={saveProject} onOpenSaved={() => savedProject && openProject(savedProject)} />}
     {screen === 'note' && savedProject && <NoteScreen project={savedProject} currentGroups={groups} onAddContext={addProjectContext} onUpdateHypothesis={refreshProjectHypothesis} onStatus={updateProjectStatus} />}
-    {showRestartConfirm && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-heading"><h2 id="restart-heading">最初からやり直しますか？</h2><p>入力中の回答は保存されません。保存済みの業務と仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setShowRestartConfirm(false)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { setShowRestartConfirm(false); clearSession(); goHome() }}>やり直す</button></div></section></div>}
+    {showRestartConfirm && <div className="confirm-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-heading"><h2 id="restart-heading">最初からやり直しますか？</h2><p>この業務の下書きを削除して、最初の状態に戻します。保存済みの仮説は残ります。</p><div><button type="button" className="secondary-button" onClick={() => setShowRestartConfirm(false)}>キャンセル</button><button type="button" className="primary-button" onClick={() => { setShowRestartConfirm(false); if (flow.group) deleteDraft(flow.group.id); clearSession(); refreshDrafts(); goHome() }}>やり直す</button></div></section></div>}
   </div>
 }
